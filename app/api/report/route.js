@@ -1,8 +1,8 @@
-import { getServerSession } from "next-auth";
+import { requireAuth } from "../../../lib/middleware/auth";
 import { getPageSpeedReport } from "../../../lib/pagespeed";
 import { generateReportPdf } from "../../../lib/pdf";
 import { saveReport } from "../../../lib/reports";
-import { authOptions } from "../auth/[...nextauth]/route";
+import { ROLES } from "../../../lib/rbac";
 
 // Ensure this route runs in the Node.js runtime (required for pdfkit / googleapis)
 export const runtime = "nodejs";
@@ -18,17 +18,19 @@ function isValidUrl(url) {
 }
 
 export async function POST(req) {
-  // Check authentication
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return new Response(
-      JSON.stringify({ error: "Unauthorized. Please log in." }),
-      {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
-  }
+  try {
+    const session = await requireAuth();
+    
+    // Viewers cannot create reports
+    if (session.user.role === ROLES.VIEWER) {
+      return new Response(
+        JSON.stringify({ error: "Forbidden: Viewers cannot create reports." }),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
 
   const format = req.nextUrl.searchParams.get("format") ?? "pdf";
   const saveToDb = req.nextUrl.searchParams.get("save") !== "false"; // Default to true
@@ -131,6 +133,16 @@ export async function POST(req) {
       },
     });
   } catch (err) {
+    if (err.message === "Unauthorized") {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized. Please log in." }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+    
     const errorMessage = err?.message ?? String(err);
     if (process.env.NODE_ENV === "development") {
       console.error("PDF generation error:", err);

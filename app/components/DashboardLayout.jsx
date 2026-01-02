@@ -15,10 +15,16 @@ import {
   FiLogOut
 } from "react-icons/fi";
 
+import { FiSettings } from "react-icons/fi";
+
 const navigationItems = [
   { id: "page-speed", label: "Page Speed", icon: FiZap },
   { id: "search-console", label: "Search Console", icon: FiSearch },
   { id: "reports", label: "Reports", icon: FiFileText },
+];
+
+const adminNavigationItems = [
+  { id: "admin", label: "User Management", icon: FiSettings, role: "super_admin" },
 ];
 
 export default function DashboardLayout({ children, activeSection = "page-speed", onSectionChange }) {
@@ -131,6 +137,53 @@ export default function DashboardLayout({ children, activeSection = "page-speed"
                 </button>
               );
             })}
+            
+            {/* Admin Navigation (Super Admin only) */}
+            {session?.user?.role === "super_admin" && (
+              <>
+                <div className="pt-4 pb-2 px-4">
+                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-600 uppercase tracking-wider">
+                    Administration
+                  </p>
+                </div>
+                {adminNavigationItems.map((item) => {
+                  const IconComponent = item.icon;
+                  const isActive = activeSection === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        if (onSectionChange) {
+                          onSectionChange(item.id);
+                        }
+                        if (isMobile) {
+                          setSidebarOpen(false);
+                        }
+                      }}
+                      className={`w-full flex items-center space-x-3.5 px-4 py-3 rounded-xl transition-all duration-300 group relative ${
+                        isActive
+                          ? "bg-gradient-to-r from-[#0EFF2A]/10 to-[#0EFF2A]/5 text-gray-900 dark:text-black shadow-md shadow-[#0EFF2A]/10 border border-[#0EFF2A]/20"
+                          : "text-gray-700 dark:text-gray-800 hover:bg-gray-50/80 dark:hover:bg-gray-200/50 hover:text-gray-900 dark:hover:text-black border border-transparent hover:border-gray-200/60 dark:hover:border-gray-300/60"
+                      }`}
+                      aria-current={isActive ? "page" : undefined}
+                    >
+                      <div className={`relative ${isActive ? "scale-110" : "group-hover:scale-110"} transition-transform duration-300`}>
+                        <IconComponent className={`w-5 h-5 ${isActive ? "text-[#0EFF2A]" : ""}`} />
+                        {isActive && (
+                          <div className="absolute -inset-1 bg-[#0EFF2A]/20 rounded-lg blur-sm -z-10"></div>
+                        )}
+                      </div>
+                      <span className={`font-semibold text-sm ${isActive ? "text-gray-900 dark:text-black" : ""} transition-colors duration-200`}>
+                        {item.label}
+                      </span>
+                      {isActive && (
+                        <div className="ml-auto w-2 h-2 rounded-full shadow-sm" style={{ backgroundColor: 'oklch(37.3% 0.034 259.733)' }} />
+                      )}
+                    </button>
+                  );
+                })}
+              </>
+            )}
           </nav>
 
           {/* Sidebar Footer */}

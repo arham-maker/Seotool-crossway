@@ -16,7 +16,7 @@ export const authOptions = {
         }
 
         const user = await getUserByEmail(credentials.email);
-        if (!user) {
+        if (!user || user.isActive === false) {
           return null;
         }
 
@@ -29,6 +29,9 @@ export const authOptions = {
           id: user._id.toString(),
           email: user.email,
           name: user.name,
+          role: user.role || "user",
+          siteLink: user.siteLink || null,
+          accessibleSites: user.accessibleSites || (user.siteLink ? [user.siteLink] : []),
         };
       },
     }),
@@ -45,6 +48,17 @@ export const authOptions = {
         token.id = user.id;
         token.email = user.email;
         token.name = user.name;
+        token.role = user.role;
+        token.siteLink = user.siteLink;
+        token.accessibleSites = user.accessibleSites;
+      } else if (token.email) {
+        // Refresh user data on each token refresh
+        const userData = await getUserByEmail(token.email);
+        if (userData && userData.isActive !== false) {
+          token.role = userData.role || "user";
+          token.siteLink = userData.siteLink || null;
+          token.accessibleSites = userData.accessibleSites || (userData.siteLink ? [userData.siteLink] : []);
+        }
       }
       return token;
     },
@@ -53,6 +67,9 @@ export const authOptions = {
         session.user.id = token.id;
         session.user.email = token.email;
         session.user.name = token.name;
+        session.user.role = token.role || "user";
+        session.user.siteLink = token.siteLink || null;
+        session.user.accessibleSites = token.accessibleSites || [];
       }
       return session;
     },

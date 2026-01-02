@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { FiZap, FiGlobe, FiDownload, FiAlertCircle, FiCheckCircle, FiInfo } from "react-icons/fi";
 
 function isValidUrl(url) {
@@ -13,6 +14,8 @@ function isValidUrl(url) {
 }
 
 export default function PageSpeedSection() {
+  const { data: session } = useSession();
+  const isViewer = session?.user?.role === "viewer";
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -112,8 +115,9 @@ export default function PageSpeedSection() {
                 id="url"
                 type="url"
                 required
+                disabled={isViewer}
                 placeholder="https://example.com"
-                className="w-full rounded-xl border-2 border-gray-200 dark:border-gray-300 bg-white dark:bg-gray-100 pl-12 pr-4 py-3.5 text-black dark:text-black placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#0EFF2A]/20 focus:border-[#0EFF2A] transition-all duration-200 shadow-sm hover:shadow-md"
+                className="w-full rounded-xl border-2 border-gray-200 dark:border-gray-300 bg-white dark:bg-gray-100 pl-12 pr-4 py-3.5 text-black dark:text-black placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#0EFF2A]/20 focus:border-[#0EFF2A] transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 aria-describedby="url-help"
@@ -180,9 +184,21 @@ export default function PageSpeedSection() {
             </div>
           )}
 
+          {isViewer && (
+            <div className="rounded-lg border border-yellow-200 dark:border-yellow-800/50 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3 shadow-sm" role="alert">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-full flex items-center justify-center shrink-0">
+                  <FiInfo className="w-4 h-4 text-yellow-600 dark:text-yellow-400" aria-hidden="true" />
+                </div>
+                <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+                  Viewers have read-only access and cannot generate reports.
+                </p>
+              </div>
+            </div>
+          )}
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || isViewer}
             className="w-full lg:w-auto inline-flex items-center justify-center px-8 py-3.5 rounded-xl bg-gradient-to-r from-[#0EFF2A] to-[#0BCC22] text-black font-bold shadow-lg shadow-[#0EFF2A]/30 hover:shadow-xl hover:shadow-[#0EFF2A]/40 hover:scale-[1.02] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-300 group"
             aria-busy={loading}
           >

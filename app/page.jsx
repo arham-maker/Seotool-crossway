@@ -7,6 +7,7 @@ import DashboardLayout from "./components/DashboardLayout";
 import PageSpeedSection from "./components/PageSpeedSection";
 import SearchConsoleSection from "./components/SearchConsoleSection";
 import ReportsSection from "./components/ReportsSection";
+import AdminSection from "./components/AdminSection";
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -43,6 +44,8 @@ export default function Home() {
         return <SearchConsoleSection />;
       case "reports":
         return <ReportsSection />;
+      case "admin":
+        return session?.user?.role === "super_admin" ? <AdminSection /> : <PageSpeedSection />;
       default:
         return <PageSpeedSection />;
     }
