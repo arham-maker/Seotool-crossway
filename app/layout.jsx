@@ -2,6 +2,21 @@ import { Nunito } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 
+// Validate environment on server startup
+if (typeof window === "undefined") {
+  try {
+    const { validateStartup } = require("../lib/startup");
+    validateStartup().catch((err) => {
+      console.error("Startup validation failed:", err);
+    });
+  } catch (err) {
+    // Ignore errors in build time
+    if (process.env.NODE_ENV !== "production" || process.env.VERCEL !== "1") {
+      console.warn("Could not run startup validation:", err.message);
+    }
+  }
+}
+
 const nunito = Nunito({
   variable: "--font-nunito",
   subsets: ["latin"],

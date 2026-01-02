@@ -1,12 +1,37 @@
 import { createUser, hashPassword, getUserByEmail } from "../../../../lib/auth";
+import { isValidEmail, validatePassword, sanitizeString } from "../../../../lib/validation";
+import { checkRateLimit, getClientIdentifier } from "../../../../lib/rateLimit";
+import { handleApiError } from "../../../../lib/errors";
+import { logger } from "../../../../lib/logger";
 
 export async function POST(req) {
   try {
-    const { email, password, name } = await req.json();
-
-    if (!email || !password) {
+    // Rate limiting
+    const identifier = getClientIdentifier(req);
+    const rateLimit = checkRateLimit(identifier, "/api/auth/register");
+    
+    if (!rateLimit.allowed) {
       return new Response(
-        JSON.stringify({ error: "Email and password are required" }),
+        JSON.stringify({
+          error: "Too many registration attempts. Please try again later.",
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
+          },
+        }
+      );
+    }
+
+    const body = await req.json();
+    const { email, password, name } = body;
+
+    // Validate email
+    if (!email || !isValidEmail(email)) {
+      return new Response(
+        JSON.stringify({ error: "Valid email is required" }),
         {
           status: 400,
           headers: { "Content-Type": "application/json" },
@@ -14,15 +39,23 @@ export async function POST(req) {
       );
     }
 
-    if (password.length < 6) {
+    // Validate password strength
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
       return new Response(
-        JSON.stringify({ error: "Password must be at least 6 characters" }),
+        JSON.stringify({
+          error: "Password does not meet requirements",
+          details: passwordValidation.errors,
+        }),
         {
           status: 400,
           headers: { "Content-Type": "application/json" },
         }
       );
     }
+
+    // Sanitize name
+    const sanitizedName = name ? sanitizeString(name, 100) : null;
 
     // Check if user already exists
     const existingUser = await getUserByEmail(email);
@@ -37,7 +70,9 @@ export async function POST(req) {
     }
 
     const hashedPassword = await hashPassword(password);
-    const user = await createUser(email, hashedPassword, name || null);
+    const user = await createUser(email.toLowerCase().trim(), hashedPassword, sanitizedName);
+
+    logger.info("User registered", { userId: user.id, email: user.email });
 
     return new Response(
       JSON.stringify({ message: "User created successfully", userId: user.id }),
@@ -47,16 +82,8 @@ export async function POST(req) {
       }
     );
   } catch (error) {
-    console.error("Registration error:", error);
-    return new Response(
-      JSON.stringify({
-        error: error.message || "Failed to create user",
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    logger.error("Registration error", { error: error.message });
+    return handleApiError(error, req);
   }
 }
 

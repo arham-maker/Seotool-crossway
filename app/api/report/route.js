@@ -3,23 +3,35 @@ import { getPageSpeedReport } from "../../../lib/pagespeed";
 import { generateReportPdf } from "../../../lib/pdf";
 import { saveReport } from "../../../lib/reports";
 import { ROLES } from "../../../lib/rbac";
+import { isValidUrl, sanitizeString } from "../../../lib/validation";
+import { checkRateLimit, getClientIdentifier } from "../../../lib/rateLimit";
+import { logger } from "../../../lib/logger";
 
 // Ensure this route runs in the Node.js runtime (required for pdfkit / googleapis)
 export const runtime = "nodejs";
 
-function isValidUrl(url) {
-  try {
-    // Throws if invalid
-    new URL(url);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function POST(req) {
   try {
     const session = await requireAuth();
+    
+    // Rate limiting
+    const identifier = getClientIdentifier(req, session);
+    const rateLimit = checkRateLimit(identifier, "/api/report");
+    
+    if (!rateLimit.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: "Too many requests. Please try again later.",
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
+          },
+        }
+      );
+    }
     
     // Viewers cannot create reports
     if (session.user.role === ROLES.VIEWER) {
@@ -48,9 +60,10 @@ export async function POST(req) {
       );
     }
 
-    const { url } = body ?? {};
-
-    if (!url || typeof url !== "string" || !isValidUrl(url)) {
+    const { url: rawUrl } = body ?? {};
+    
+    // Validate and sanitize URL
+    if (!rawUrl || typeof rawUrl !== "string") {
       return new Response(
         JSON.stringify({
           error: "Invalid or missing 'url'. Please provide a fully-qualified URL.",
@@ -62,16 +75,33 @@ export async function POST(req) {
       );
     }
 
+    const url = sanitizeString(rawUrl, 2048); // Max URL length
+
+    if (!isValidUrl(url)) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid URL format. Please provide a valid HTTP or HTTPS URL.",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
     let pagespeedData = null;
 
     try {
+      logger.info("Generating PageSpeed report", { url, userId: session.user.id });
       pagespeedData = await getPageSpeedReport(url);
     } catch (err) {
-      // Log full error in development, sanitized in production
+      logger.error("PageSpeed API error", { 
+        error: err.message, 
+        url,
+        userId: session.user.id 
+      });
+      
       const errorMessage = err?.message ?? String(err);
-      if (process.env.NODE_ENV === "development") {
-        console.error("PageSpeed API error:", err);
-      }
       return new Response(
         JSON.stringify({
           error: "Failed to fetch PageSpeed Insights data.",
@@ -143,10 +173,13 @@ export async function POST(req) {
         );
       }
       
+      logger.error("PDF generation error", { 
+        error: err.message, 
+        url,
+        userId: session.user.id 
+      });
+      
       const errorMessage = err?.message ?? String(err);
-      if (process.env.NODE_ENV === "development") {
-        console.error("PDF generation error:", err);
-      }
       return new Response(
         JSON.stringify({
           error: "Failed to generate PDF report.",
@@ -159,6 +192,11 @@ export async function POST(req) {
       );
     }
   } catch (err) {
+    logger.error("Report generation error", { 
+      error: err.message,
+      stack: process.env.NODE_ENV === "development" ? err.stack : undefined
+    });
+    
     if (err.message === "Unauthorized") {
       return new Response(
         JSON.stringify({ error: "Unauthorized. Please log in." }),
@@ -170,9 +208,6 @@ export async function POST(req) {
     }
     
     const errorMessage = err?.message ?? String(err);
-    if (process.env.NODE_ENV === "development") {
-      console.error("Report generation error:", err);
-    }
     return new Response(
       JSON.stringify({
         error: "An error occurred while processing the request.",
