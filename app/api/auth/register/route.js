@@ -9,7 +9,7 @@ export async function POST(req) {
     // Rate limiting
     const identifier = getClientIdentifier(req);
     const rateLimit = checkRateLimit(identifier, "/api/auth/register");
-    
+
     if (!rateLimit.allowed) {
       return new Response(
         JSON.stringify({
@@ -82,7 +82,38 @@ export async function POST(req) {
       }
     );
   } catch (error) {
-    logger.error("Registration error", { error: error.message });
+    // Enhanced error logging for debugging
+    logger.error("Registration error", {
+      error: error.message,
+      stack: error.stack,
+      email: email ? email.substring(0, 3) + "***" : "unknown",
+    });
+
+    // Check for specific error types and provide better messages
+    if (error.message?.includes("MongoDB") || error.message?.includes("MONGODB") || error.message?.includes("connection")) {
+      return new Response(
+        JSON.stringify({
+          error: "Database connection error. Please try again later.",
+          ...(process.env.NODE_ENV === "development" && { details: error.message })
+        }),
+        {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    if (error.message?.includes("Email already exists") || error.message?.includes("duplicate")) {
+      return new Response(
+        JSON.stringify({ error: "Email already registered" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Use handleApiError for other errors
     return handleApiError(error, req);
   }
 }
