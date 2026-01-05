@@ -5,6 +5,8 @@ import { handleApiError } from "../../../../lib/errors";
 import { logger } from "../../../../lib/logger";
 
 export async function POST(req) {
+  let email = null; // Declare outside try block for error handling
+  
   try {
     // Rate limiting
     const identifier = getClientIdentifier(req);
@@ -26,7 +28,9 @@ export async function POST(req) {
     }
 
     const body = await req.json();
-    const { email, password, name } = body;
+    const parsedData = body || {};
+    email = parsedData.email;
+    const { password, name } = parsedData;
 
     // Validate email
     if (!email || !isValidEmail(email)) {
@@ -87,10 +91,26 @@ export async function POST(req) {
       error: error.message,
       stack: error.stack,
       email: email ? email.substring(0, 3) + "***" : "unknown",
+      hasEmail: !!email,
     });
 
     // Check for specific error types and provide better messages
-    if (error.message?.includes("MongoDB") || error.message?.includes("MONGODB") || error.message?.includes("connection")) {
+    if (error.message?.includes("bad auth") || error.message?.includes("Authentication failed")) {
+      return new Response(
+        JSON.stringify({
+          error: "Database authentication failed. Please check your MongoDB credentials.",
+          ...(process.env.NODE_ENV === "development" && { 
+            details: "Verify MONGODB_URI username and password are correct. Special characters in password must be URL-encoded." 
+          })
+        }),
+        {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+    
+    if (error.message?.includes("MongoDB") || error.message?.includes("MONGODB") || error.message?.includes("connection") || error.message?.includes("timeout")) {
       return new Response(
         JSON.stringify({
           error: "Database connection error. Please try again later.",

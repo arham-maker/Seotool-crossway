@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Use webpack instead of Turbopack (Turbopack has issues with MongoDB on Windows)
-  // Set empty turbopack config to silence the warning
-  turbopack: {},
+  // Do NOT include turbopack config when using webpack - it causes conflicts
   
   // Production optimizations
   compress: true,
