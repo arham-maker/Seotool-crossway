@@ -3,7 +3,7 @@ import { getPageSpeedReport } from "../../../lib/pagespeed";
 import { generateReportPdf } from "../../../lib/pdf";
 import { saveReport } from "../../../lib/reports";
 import { ROLES } from "../../../lib/rbac";
-import { isValidUrl, sanitizeString } from "../../../lib/validation";
+import { isValidUrl, sanitizeString, validateAndNormalizeSiteUrl } from "../../../lib/validation";
 import { checkRateLimit, getClientIdentifier } from "../../../lib/rateLimit";
 import { logger } from "../../../lib/logger";
 
@@ -87,6 +87,50 @@ export async function POST(req) {
           headers: { "Content-Type": "application/json" },
         }
       );
+    }
+
+    // Access control: Regular users can only generate reports for their own siteLink
+    const userRole = session.user.role || ROLES.USER;
+    if (userRole === ROLES.USER) {
+      const userSiteLink = session.user.siteLink;
+      if (!userSiteLink) {
+        return new Response(
+          JSON.stringify({
+            error: "No website URL linked to your account. Please contact an administrator.",
+          }),
+          {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+      
+      const userSiteValidation = validateAndNormalizeSiteUrl(userSiteLink);
+      const requestUrlValidation = validateAndNormalizeSiteUrl(url);
+      
+      if (!userSiteValidation.valid || !requestUrlValidation.valid) {
+        return new Response(
+          JSON.stringify({
+            error: "Invalid URL format.",
+          }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+      
+      if (requestUrlValidation.normalized !== userSiteValidation.normalized) {
+        return new Response(
+          JSON.stringify({
+            error: "Access denied. You can only generate reports for your own website URL.",
+          }),
+          {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
     }
 
     let pagespeedData = null;

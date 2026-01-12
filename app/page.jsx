@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import DashboardLayout from "./components/DashboardLayout";
+import DashboardSection from "./components/DashboardSection";
 import PageSpeedSection from "./components/PageSpeedSection";
 import SearchConsoleSection from "./components/SearchConsoleSection";
 import ReportsSection from "./components/ReportsSection";
@@ -12,7 +13,7 @@ import AdminSection from "./components/AdminSection";
 export default function Home() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [activeSection, setActiveSection] = useState("page-speed");
+  const [activeSection, setActiveSection] = useState("dashboard");
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -38,6 +39,8 @@ export default function Home() {
 
   const renderSection = () => {
     switch (activeSection) {
+      case "dashboard":
+        return <DashboardSection />;
       case "page-speed":
         return <PageSpeedSection />;
       case "search-console":
@@ -45,9 +48,9 @@ export default function Home() {
       case "reports":
         return <ReportsSection />;
       case "admin":
-        return session?.user?.role === "super_admin" ? <AdminSection /> : <PageSpeedSection />;
+        return session?.user?.role === "super_admin" ? <AdminSection /> : <DashboardSection />;
       default:
-        return <PageSpeedSection />;
+        return <DashboardSection />;
     }
   };
 

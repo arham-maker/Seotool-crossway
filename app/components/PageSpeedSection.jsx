@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { FiZap, FiGlobe, FiDownload, FiAlertCircle, FiCheckCircle, FiInfo } from "react-icons/fi";
 
@@ -15,13 +15,23 @@ function isValidUrl(url) {
 
 export default function PageSpeedSection() {
   const { data: session } = useSession();
+  const isSuperAdmin = session?.user?.role === "super_admin";
   const isViewer = session?.user?.role === "viewer";
+  const userSiteLink = session?.user?.siteLink;
+  
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [reportId, setReportId] = useState(null);
   const [pdfBlob, setPdfBlob] = useState(null);
+
+  // Auto-load user's siteLink for regular users
+  useEffect(() => {
+    if (!isSuperAdmin && userSiteLink && !url) {
+      setUrl(userSiteLink);
+    }
+  }, [userSiteLink, isSuperAdmin, url]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -106,6 +116,9 @@ export default function PageSpeedSection() {
             >
               <span>Website URL</span>
               <span className="text-red-500 text-xs" aria-label="required">*</span>
+              {!isSuperAdmin && userSiteLink && (
+                <span className="text-xs text-[#0EFF2A] font-normal">(Auto-loaded from your account)</span>
+              )}
             </label>
             <div className="relative group">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -115,7 +128,7 @@ export default function PageSpeedSection() {
                 id="url"
                 type="url"
                 required
-                disabled={isViewer}
+                disabled={isViewer || (!isSuperAdmin && !!userSiteLink)}
                 placeholder="https://example.com"
                 className="w-full rounded-xl border-2 border-gray-200 dark:border-gray-300 bg-white dark:bg-gray-100 pl-12 pr-4 py-3.5 text-black dark:text-black placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#0EFF2A]/20 focus:border-[#0EFF2A] transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
                 value={url}
@@ -125,7 +138,11 @@ export default function PageSpeedSection() {
             </div>
             <p id="url-help" className="mt-2.5 text-xs text-gray-600 dark:text-gray-700 flex items-center space-x-2">
               <FiInfo className="w-4 h-4 shrink-0 text-gray-400" aria-hidden="true" />
-              <span>Must be a full URL including protocol (e.g. https://example.com)</span>
+              <span>
+                {!isSuperAdmin && userSiteLink
+                  ? "Your website URL is linked to your account. Super admins can enter any URL."
+                  : "Must be a full URL including protocol (e.g. https://example.com)"}
+              </span>
             </p>
           </div>
 
