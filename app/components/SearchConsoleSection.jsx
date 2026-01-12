@@ -307,21 +307,38 @@ export default function SearchConsoleSection() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
-                {data.siteInfo.verified ? (
-                  <>
-                    <FiCheckCircle className="w-5 h-5 text-[#0EFF2A]" />
-                    <span className="text-sm text-gray-700 dark:text-gray-800">
-                      Site is verified in Search Console
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <FiAlertCircle className="w-5 h-5 text-yellow-600" />
-                    <span className="text-sm text-gray-700 dark:text-gray-800">
-                      {data.siteInfo.error || "Site verification status unknown"}
-                    </span>
-                  </>
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2">
+                  {data.siteInfo.verified ? (
+                    <>
+                      <FiCheckCircle className="w-5 h-5 text-[#0EFF2A]" />
+                      <span className="text-sm text-gray-700 dark:text-gray-800">
+                        Site is verified in Search Console
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <FiAlertCircle className="w-5 h-5 text-yellow-600" />
+                      <span className="text-sm text-gray-700 dark:text-gray-800">
+                        Site verification status unknown
+                      </span>
+                    </>
+                  )}
+                </div>
+                {!data.siteInfo.verified && (
+                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-300">
+                    <p className="text-xs text-gray-600 dark:text-gray-700 mb-2">
+                      <strong>To fix this:</strong>
+                    </p>
+                    <ol className="text-xs text-gray-600 dark:text-gray-700 space-y-1 list-decimal list-inside">
+                      <li>Verify your website in <a href="https://search.google.com/search-console" target="_blank" rel="noopener noreferrer" className="text-[#0EFF2A] hover:underline">Google Search Console</a></li>
+                      <li>Add the service account email as a user with Full access in Search Console settings</li>
+                      <li>Ensure the URL format matches exactly (with/without www)</li>
+                    </ol>
+                    <p className="text-xs text-gray-500 dark:text-gray-600 mt-2">
+                      <strong>Note:</strong> PageSpeed Insights will still work even if Search Console isn't verified.
+                    </p>
+                  </div>
                 )}
               </div>
               {data.sitemaps?.sitemaps && data.sitemaps.sitemaps.length > 0 && (

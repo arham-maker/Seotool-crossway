@@ -482,21 +482,30 @@ export default function DashboardSection() {
                 </div>
                 {dashboardData.statistics ? (
                   <div className="space-y-3">
-                    <div className="flex items-center space-x-2">
-                      {dashboardData.statistics.verified ? (
-                        <>
-                          <FiCheckCircle className="w-5 h-5 text-[#0EFF2A]" />
-                          <span className="text-sm text-gray-700 dark:text-gray-800">
-                            Site is verified in Search Console
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <FiAlertCircle className="w-5 h-5 text-yellow-600" />
-                          <span className="text-sm text-gray-700 dark:text-gray-800">
-                            Site verification status unknown
-                          </span>
-                        </>
+                    <div className="space-y-3">
+                      <div className="flex items-center space-x-2">
+                        {dashboardData.statistics.verified ? (
+                          <>
+                            <FiCheckCircle className="w-5 h-5 text-[#0EFF2A]" />
+                            <span className="text-sm text-gray-700 dark:text-gray-800">
+                              Site is verified in Search Console
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <FiAlertCircle className="w-5 h-5 text-yellow-600" />
+                            <span className="text-sm text-gray-700 dark:text-gray-800">
+                              Site verification status unknown
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      {!dashboardData.statistics.verified && (
+                        <div className="pt-2 border-t border-gray-200 dark:border-gray-300">
+                          <p className="text-xs text-gray-600 dark:text-gray-700">
+                            Verify your site in <a href="https://search.google.com/search-console" target="_blank" rel="noopener noreferrer" className="text-[#0EFF2A] hover:underline">Google Search Console</a> and grant the service account access.
+                          </p>
+                        </div>
                       )}
                     </div>
                     {dashboardData.statistics.sitemapsCount > 0 && (
