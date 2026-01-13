@@ -68,7 +68,20 @@ export default function SearchConsoleSection() {
 
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.error || errorData.details || "Failed to fetch Search Console data.");
+        const errorMessage = errorData.error || errorData.details || "Failed to fetch Search Console data.";
+        
+        // Provide more helpful error messages
+        if (errorMessage.includes("GOOGLE_APPLICATION_CREDENTIALS_JSON")) {
+          throw new Error("Google Search Console credentials not configured. Please check your .env.local file and ensure GOOGLE_APPLICATION_CREDENTIALS_JSON is set correctly.");
+        }
+        if (errorMessage.includes("invalid_grant") || errorMessage.includes("JWT")) {
+          throw new Error("Authentication failed. Please sync your system clock and restart the server. See JWT_TOKEN_FIX.md for details.");
+        }
+        if (errorMessage.includes("Access denied") || errorMessage.includes("403")) {
+          throw new Error("Access denied. Please ensure the service account is added to Google Search Console with 'Full' access. See SEARCH_CONSOLE_SETUP_GUIDE.md for details.");
+        }
+        
+        throw new Error(errorMessage);
       }
 
       const reportData = await res.json();

@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import DashboardLayout from "./components/DashboardLayout";
 import DashboardSection from "./components/DashboardSection";
-import PageSpeedSection from "./components/PageSpeedSection";
+import PerformanceReportSection from "./components/PerformanceReportSection";
 import SearchConsoleSection from "./components/SearchConsoleSection";
 import ReportsSection from "./components/ReportsSection";
 import AdminSection from "./components/AdminSection";
@@ -41,8 +41,8 @@ export default function Home() {
     switch (activeSection) {
       case "dashboard":
         return <DashboardSection />;
-      case "page-speed":
-        return <PageSpeedSection />;
+      case "performance":
+        return <PerformanceReportSection />;
       case "search-console":
         return <SearchConsoleSection />;
       case "reports":

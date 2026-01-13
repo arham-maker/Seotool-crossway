@@ -4,10 +4,10 @@ import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { 
-  FiZap, 
   FiFileText, 
   FiSearch,
   FiBarChart2,
+  FiTrendingUp,
   FiMenu,
   FiX,
   FiChevronDown,
@@ -20,7 +20,7 @@ import { FiSettings } from "react-icons/fi";
 
 const navigationItems = [
   { id: "dashboard", label: "Dashboard", icon: FiBarChart2 },
-  { id: "page-speed", label: "Page Speed", icon: FiZap },
+  { id: "performance", label: "Performance", icon: FiTrendingUp },
   { id: "search-console", label: "Search Console", icon: FiSearch },
   { id: "reports", label: "Reports", icon: FiFileText },
 ];
