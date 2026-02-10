@@ -66,7 +66,7 @@ export async function middleware(req) {
   const { pathname } = req.nextUrl;
 
   // Public routes that don't require authentication
-  const publicRoutes = ["/login", "/signup", "/forgot-password", "/reset-password"];
+  const publicRoutes = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email"];
   const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route));
 
   // If user is not authenticated and trying to access protected route
@@ -75,7 +75,8 @@ export async function middleware(req) {
   }
 
   // If user is authenticated and trying to access auth pages, redirect to home
-  if (token && isPublicRoute && pathname !== "/reset-password") {
+  // Exception: /reset-password and /verify-email should always be accessible
+  if (token && isPublicRoute && pathname !== "/reset-password" && !pathname.startsWith("/verify-email")) {
     return NextResponse.redirect(new URL("/", req.url));
   }
 

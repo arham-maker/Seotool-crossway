@@ -51,9 +51,6 @@ export default function SignUpPage() {
       }
 
       setSuccess(true);
-      setTimeout(() => {
-        router.push("/login");
-      }, 2000);
     } catch (err) {
       setError("An unexpected error occurred");
     } finally {
@@ -84,9 +81,15 @@ export default function SignUpPage() {
             </div>
           </div>
           <h2 className="text-2xl font-bold mb-2 text-gray-900 dark:text-black">Account Created!</h2>
-          <p className="text-gray-600 dark:text-gray-800 mb-4">
-            Your account has been successfully created. Redirecting to login...
+          <p className="text-gray-600 dark:text-gray-800 mb-6">
+            A verification email has been sent to your inbox. Please verify your email address to activate your account, then you can log in.
           </p>
+          <Link
+            href="/login"
+            className="inline-flex items-center justify-center rounded-lg bg-[#0EFF2A] px-6 py-2.5 text-sm font-semibold text-black shadow-md hover:shadow-lg hover:bg-primary-600 transition-all duration-200"
+          >
+            Go to Login
+          </Link>
         </div>
       </main>
     );

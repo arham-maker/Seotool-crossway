@@ -33,6 +33,9 @@ export async function GET(req, { params }) {
           siteLink: user.siteLink || null,
           accessibleSites: user.accessibleSites || [],
           isActive: user.isActive !== false,
+          emailVerified: user.emailVerified || false,
+          status: user.status || (user.emailVerified ? "active" : "pending"),
+          emailVerifiedAt: user.emailVerifiedAt || null,
           createdAt: user.createdAt,
           createdBy: user.createdBy || null,
         },
@@ -135,6 +138,8 @@ export async function PATCH(req, { params }) {
           siteLink: user.siteLink || null,
           accessibleSites: user.accessibleSites || [],
           isActive: user.isActive !== false,
+          emailVerified: user.emailVerified || false,
+          status: user.status || (user.emailVerified ? "active" : "pending"),
         },
       }),
       {

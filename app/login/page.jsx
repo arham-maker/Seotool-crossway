@@ -25,7 +25,13 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        setError("Invalid email or password");
+        if (result.error.includes("EMAIL_NOT_VERIFIED")) {
+          setError(
+            "Your email is not verified yet. Please check your inbox for the verification link, or contact your administrator to resend it."
+          );
+        } else {
+          setError("Invalid email or password");
+        }
       } else {
         router.push("/");
         router.refresh();

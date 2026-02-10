@@ -15,7 +15,6 @@ export default function Home() {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState("dashboard");
 
-  // Redirect to login if not authenticated
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login");
@@ -26,7 +25,7 @@ export default function Home() {
     return (
       <div className="min-h-screen bg-white dark:bg-gray-50 flex items-center justify-center transition-colors">
         <div className="text-center">
-          <div 
+          <div
             className="inline-block h-8 w-8 border-2 border-gray-400 dark:border-gray-600 border-t-transparent rounded-full animate-spin"
             aria-label="Loading"
             role="status"

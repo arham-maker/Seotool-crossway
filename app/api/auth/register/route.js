@@ -1,7 +1,9 @@
-import { createUser, hashPassword, getUserByEmail } from "../../../../lib/auth";
+import crypto from "crypto";
+import { createUser, hashPassword, getUserByEmail, hashToken, createEmailVerificationToken } from "../../../../lib/auth";
 import { isValidEmail, validatePassword, sanitizeString } from "../../../../lib/validation";
 import { checkRateLimit, getClientIdentifier } from "../../../../lib/rateLimit";
 import { handleApiError } from "../../../../lib/errors";
+import { sendVerificationEmail } from "../../../../lib/email";
 import { logger } from "../../../../lib/logger";
 
 export async function POST(req) {
@@ -74,12 +76,30 @@ export async function POST(req) {
     }
 
     const hashedPassword = await hashPassword(password);
-    const user = await createUser(email.toLowerCase().trim(), hashedPassword, sanitizedName);
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await createUser(normalizedEmail, hashedPassword, sanitizedName);
 
-    logger.info("User registered", { userId: user.id, email: user.email });
+    // Generate verification token and send email
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const hashedTokenValue = hashToken(rawToken);
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24);
+
+    await createEmailVerificationToken(normalizedEmail, hashedTokenValue, expiresAt.toISOString());
+    const emailSent = await sendVerificationEmail(normalizedEmail, sanitizedName, rawToken);
+
+    logger.info("User registered, verification email sent", {
+      userId: user.id,
+      email: user.email,
+      emailSent,
+    });
 
     return new Response(
-      JSON.stringify({ message: "User created successfully", userId: user.id }),
+      JSON.stringify({
+        message: "Registration successful! Please check your email to verify your account.",
+        userId: user.id,
+        emailSent,
+      }),
       {
         status: 201,
         headers: { "Content-Type": "application/json" },

@@ -1,6 +1,9 @@
+import crypto from "crypto";
 import { requireSuperAdmin } from "../../../../lib/middleware/auth";
-import { getAllUsers, createUser, hashPassword, getUserByEmail } from "../../../../lib/auth";
+import { getAllUsers, createUser, hashPassword, getUserByEmail, hashToken, createEmailVerificationToken } from "../../../../lib/auth";
 import { ROLES } from "../../../../lib/rbac";
+import { sendVerificationEmail } from "../../../../lib/email";
+import { logger } from "../../../../lib/logger";
 
 // GET /api/admin/users - Get all users (Super Admin only)
 export async function GET(req) {
@@ -96,17 +99,40 @@ export async function POST(req) {
       siteLink,
       session.user.id
     );
-    
+
+    // Generate verification token
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const hashedTokenValue = hashToken(rawToken);
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours expiry
+
+    await createEmailVerificationToken(email, hashedTokenValue, expiresAt.toISOString());
+
+    // Send verification email (use raw token in URL, hashed in DB)
+    const emailSent = await sendVerificationEmail(email, name || null, rawToken);
+
+    logger.info("User created by admin with verification email", {
+      userId: user.id,
+      email,
+      emailSent,
+      createdBy: session.user.id,
+    });
+
     return new Response(
       JSON.stringify({ 
-        message: "User created successfully", 
+        message: emailSent 
+          ? "User created successfully. Verification email sent." 
+          : "User created successfully. Failed to send verification email — you can resend it from the admin panel.",
         user: {
           id: user.id,
           email: user.email,
           name: user.name,
           role: user.role,
           siteLink: user.siteLink,
-        }
+          emailVerified: user.emailVerified,
+          status: user.status,
+        },
+        emailSent,
       }),
       {
         status: 201,

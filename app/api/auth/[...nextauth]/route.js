@@ -20,6 +20,11 @@ export const authOptions = {
           return null;
         }
 
+        // Block unverified users from logging in
+        if (user.emailVerified === false || user.status === "pending") {
+          throw new Error("EMAIL_NOT_VERIFIED");
+        }
+
         const isValid = await verifyPassword(credentials.password, user.password);
         if (!isValid) {
           return null;
