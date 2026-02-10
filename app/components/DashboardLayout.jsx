@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { 
-  FiFileText, 
   FiSearch,
   FiBarChart2,
   FiTrendingUp,
@@ -22,7 +21,6 @@ const navigationItems = [
   { id: "dashboard", label: "Dashboard", icon: FiBarChart2 },
   { id: "performance", label: "Performance", icon: FiTrendingUp },
   { id: "search-console", label: "Search Console", icon: FiSearch },
-  { id: "reports", label: "Reports", icon: FiFileText },
 ];
 
 const adminNavigationItems = [

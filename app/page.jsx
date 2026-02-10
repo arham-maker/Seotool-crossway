@@ -7,7 +7,6 @@ import DashboardLayout from "./components/DashboardLayout";
 import DashboardSection from "./components/DashboardSection";
 import PerformanceReportSection from "./components/PerformanceReportSection";
 import SearchConsoleSection from "./components/SearchConsoleSection";
-import ReportsSection from "./components/ReportsSection";
 import AdminSection from "./components/AdminSection";
 
 export default function Home() {
@@ -44,8 +43,6 @@ export default function Home() {
         return <PerformanceReportSection />;
       case "search-console":
         return <SearchConsoleSection />;
-      case "reports":
-        return <ReportsSection />;
       case "admin":
         return session?.user?.role === "super_admin" ? <AdminSection /> : <DashboardSection />;
       default:

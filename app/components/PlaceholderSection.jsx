@@ -1,10 +1,8 @@
 "use client";
 
-import { FiZap, FiFileText } from "react-icons/fi";
+import { FiZap } from "react-icons/fi";
 
-const iconMap = {
-  "reports": FiFileText,
-};
+const iconMap = {};
 
 export default function PlaceholderSection({ title, description, icon }) {
   const IconComponent = iconMap[icon] || FiZap;
