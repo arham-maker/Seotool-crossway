@@ -1,4 +1,4 @@
-import clientPromise from "../../../lib/db";
+import { checkDatabaseConnection } from "../../../lib/db";
 import { isProduction } from "../../../lib/env";
 
 /**
@@ -19,8 +19,7 @@ export async function GET() {
 
   // Check database connection (non-blocking)
   try {
-    const client = await clientPromise;
-    await client.db().admin().ping();
+    await checkDatabaseConnection();
     health.checks.database = "connected";
   } catch (error) {
     health.checks.database = "disconnected";

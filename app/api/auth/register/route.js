@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { createUser, hashPassword, getUserByEmail, hashToken, createEmailVerificationToken } from "../../../../lib/auth";
+import { createUser, hashPassword, getUserByEmail, hashToken, createEmailVerificationToken, isFirstUserRegistration } from "../../../../lib/auth";
 import { isValidEmail, validatePassword, sanitizeString } from "../../../../lib/validation";
 import { checkRateLimit, getClientIdentifier } from "../../../../lib/rateLimit";
 import { handleApiError } from "../../../../lib/errors";
@@ -77,27 +77,45 @@ export async function POST(req) {
 
     const hashedPassword = await hashPassword(password);
     const normalizedEmail = email.toLowerCase().trim();
-    const user = await createUser(normalizedEmail, hashedPassword, sanitizedName);
+    const isFirstAccount = await isFirstUserRegistration();
+    const user = await createUser(
+      normalizedEmail,
+      hashedPassword,
+      sanitizedName,
+      isFirstAccount ? "super_admin" : "user",
+      null,
+      null,
+      { skipVerification: isFirstAccount }
+    );
 
-    // Generate verification token and send email
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const hashedTokenValue = hashToken(rawToken);
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 24);
+    let emailSent = false;
+    if (!isFirstAccount) {
+      // Generate verification token and send email for regular users
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const hashedTokenValue = hashToken(rawToken);
+      const expiresAt = new Date();
+      expiresAt.setHours(expiresAt.getHours() + 24);
 
-    await createEmailVerificationToken(normalizedEmail, hashedTokenValue, expiresAt.toISOString());
-    const emailSent = await sendVerificationEmail(normalizedEmail, sanitizedName, rawToken);
+      await createEmailVerificationToken(normalizedEmail, hashedTokenValue, expiresAt.toISOString());
+      emailSent = await sendVerificationEmail(normalizedEmail, sanitizedName, rawToken);
+    }
 
-    logger.info("User registered, verification email sent", {
+    logger.info("User registered", {
       userId: user.id,
       email: user.email,
+      role: user.role,
+      isFirstAccount,
       emailSent,
     });
 
     return new Response(
       JSON.stringify({
-        message: "Registration successful! Please check your email to verify your account.",
+        message: isFirstAccount
+          ? "Registration successful! Your account is now active as Super Admin."
+          : "Registration successful! Please check your email to verify your account.",
         userId: user.id,
+        role: user.role,
+        isFirstAccount,
         emailSent,
       }),
       {
@@ -118,9 +136,9 @@ export async function POST(req) {
     if (error.message?.includes("bad auth") || error.message?.includes("Authentication failed")) {
       return new Response(
         JSON.stringify({
-          error: "Database authentication failed. Please check your MongoDB credentials.",
+          error: "Database authentication failed. Please check your MySQL credentials.",
           ...(process.env.NODE_ENV === "development" && { 
-            details: "Verify MONGODB_URI username and password are correct. Special characters in password must be URL-encoded." 
+            details: "Verify DATABASE_URL username and password are correct. Special characters in password must be URL-encoded." 
           })
         }),
         {
@@ -130,7 +148,7 @@ export async function POST(req) {
       );
     }
     
-    if (error.message?.includes("MongoDB") || error.message?.includes("MONGODB") || error.message?.includes("connection") || error.message?.includes("timeout")) {
+    if (error.message?.includes("MySQL") || error.message?.includes("DATABASE_URL") || error.message?.includes("connection") || error.message?.includes("timeout")) {
       return new Response(
         JSON.stringify({
           error: "Database connection error. Please try again later.",

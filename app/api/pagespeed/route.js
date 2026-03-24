@@ -13,7 +13,7 @@ export const runtime = "nodejs";
  * - Super Admin: All users' websites PageSpeed data
  * - User: Only their own website PageSpeed data
  */
-export async function GET(req) {
+export async function GET() {
   try {
     // Check authentication
     const session = await getServerSession(authOptions);

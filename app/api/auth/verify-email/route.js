@@ -1,6 +1,7 @@
 import {
   hashToken,
   getEmailVerificationToken,
+  getEmailVerificationTokenRecord,
   markVerificationTokenAsUsed,
   verifyUserEmail,
   getUserByEmail,
@@ -33,12 +34,7 @@ export async function GET(req) {
 
     if (!tokenDoc) {
       // Check if it was already used or expired
-      const { default: clientPromise } = await import("../../../../lib/db");
-      const client = await clientPromise;
-      const db = client.db();
-      const existingToken = await db
-        .collection("email_verification_tokens")
-        .findOne({ token: hashedToken });
+      const existingToken = await getEmailVerificationTokenRecord(hashedToken);
 
       let reason = "invalid";
       if (existingToken) {
@@ -109,7 +105,7 @@ export async function GET(req) {
     await logVerificationAttempt({
       token: hashedToken.substring(0, 12) + "...",
       email: tokenDoc.email,
-      userId: user._id.toString(),
+      userId: user.id,
       success: true,
       reason: "verified",
       ip: req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown",
@@ -117,7 +113,7 @@ export async function GET(req) {
 
     logger.info("User email verified and account activated", {
       email: tokenDoc.email,
-      userId: user._id.toString(),
+      userId: user.id,
     });
 
     // Notify super admins (fire and forget)

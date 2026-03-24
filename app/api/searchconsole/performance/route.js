@@ -1,30 +1,12 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
-import { getSearchAnalyticsTimeSeries, getTopQueries } from "../../../../lib/searchconsole";
+import { getSearchAnalyticsTimeSeries, getTopQueries, getTopPages, getTopCountries } from "../../../../lib/searchconsole";
 import { ROLES } from "../../../../lib/rbac";
-import { validateAndNormalizeSiteUrl } from "../../../../lib/validation";
+import { isValidUrl, normalizeSiteOrigin, validateAndNormalizeSiteUrl } from "../../../../lib/validation";
 import { classifyError, ERROR_TYPES } from "../../../../lib/errorHandling";
 
 // Ensure this route runs in the Node.js runtime
 export const runtime = "nodejs";
-
-function isValidUrl(url) {
-  try {
-    new URL(url);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function normalizeSiteUrl(url) {
-  try {
-    const urlObj = new URL(url);
-    return `${urlObj.protocol}//${urlObj.host}`;
-  } catch {
-    return url;
-  }
-}
 
 function formatDate(date) {
   const year = date.getFullYear();
@@ -115,7 +97,16 @@ export async function GET(req) {
       }
     }
 
-    const normalizedUrl = normalizeSiteUrl(siteUrl);
+    const normalizedUrl = normalizeSiteOrigin(siteUrl);
+    if (!normalizedUrl) {
+      return new Response(
+        JSON.stringify({ error: "Invalid URL format." }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
     const { startDate, endDate } = getDateRange(range);
 
     // Access control: Regular users can only query their own siteLink
@@ -148,9 +139,11 @@ export async function GET(req) {
 
     try {
       // Fetch time-series data and top queries in parallel
-      const [timeSeriesData, topQueriesData] = await Promise.all([
+      const [timeSeriesData, topQueriesData, topPagesData, topCountriesData] = await Promise.all([
         getSearchAnalyticsTimeSeries(normalizedUrl, startDate, endDate),
         getTopQueries(normalizedUrl, startDate, endDate, 1000),
+        getTopPages(normalizedUrl, startDate, endDate, 1000),
+        getTopCountries(normalizedUrl, startDate, endDate, 50),
       ]);
 
       // Paginate top queries
@@ -169,6 +162,14 @@ export async function GET(req) {
             page,
             pageSize,
             totalPages: Math.ceil(topQueriesData.total / pageSize),
+          },
+          topPages: {
+            pages: topPagesData.pages,
+            total: topPagesData.total,
+          },
+          topCountries: {
+            countries: topCountriesData.countries,
+            total: topCountriesData.total,
           },
           dateRange: {
             startDate,

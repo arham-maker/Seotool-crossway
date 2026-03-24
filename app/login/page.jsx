@@ -29,14 +29,20 @@ export default function LoginPage() {
           setError(
             "Your email is not verified yet. Please check your inbox for the verification link, or contact your administrator to resend it."
           );
-        } else {
+        } else if (result.error.includes("ACCOUNT_INACTIVE")) {
+          setError("Your account is inactive. Please contact your administrator.");
+        } else if (result.error.includes("DATABASE_UNAVAILABLE")) {
+          setError("Login service is temporarily unavailable. Please try again in a moment.");
+        } else if (result.error.includes("INVALID_CREDENTIALS") || result.error.includes("CredentialsSignin")) {
           setError("Invalid email or password");
+        } else {
+          setError("Unable to sign in. Please try again.");
         }
       } else {
         router.push("/");
         router.refresh();
       }
-    } catch (err) {
+    } catch {
       setError("An unexpected error occurred");
     } finally {
       setLoading(false);
@@ -119,7 +125,7 @@ export default function LoginPage() {
           </button>
 
           <div className="text-center text-sm text-gray-600 dark:text-gray-800">
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <Link
               href="/signup"
               className="text-gray-900 dark:text-black hover:text-gray-700 dark:hover:text-gray-700 font-semibold"

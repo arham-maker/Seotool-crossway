@@ -3,36 +3,52 @@
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { 
+import {
   FiSearch,
+  FiGlobe,
   FiBarChart2,
   FiTrendingUp,
   FiMenu,
   FiX,
   FiChevronDown,
-  FiUser,
-  FiImage,
-  FiLogOut
+  FiLogOut,
+  FiSettings,
+  FiFileText,
+  FiHelpCircle,
 } from "react-icons/fi";
 
-import { FiSettings } from "react-icons/fi";
-
-const navigationItems = [
+const mainMenuItems = [
   { id: "dashboard", label: "Dashboard", icon: FiBarChart2 },
-  { id: "performance", label: "Performance", icon: FiTrendingUp },
-  { id: "search-console", label: "Search Console", icon: FiSearch },
+  { id: "website-statistics", label: "Website Statistics", icon: FiSearch },
+  { id: "smm-statistics", label: "SMM Statistics", icon: FiTrendingUp },
 ];
 
-const adminNavigationItems = [
-  { id: "admin", label: "User Management", icon: FiSettings, role: "super_admin" },
+const adminMenuItems = [
+  { id: "user-management", label: "User Management", icon: FiSettings, role: "super_admin" },
+  { id: "reports", label: "Reports", icon: FiFileText },
 ];
 
-export default function DashboardLayout({ children, activeSection = "page-speed", onSectionChange }) {
+export default function DashboardLayout({
+  children,
+  activeSection = "page-speed",
+  onSectionChange,
+  selectedSite = "",
+  onSelectedSiteChange,
+}) {
   const { data: session } = useSession();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [settingsDropdownOpen, setSettingsDropdownOpen] = useState(false);
+  const [superAdminSiteDropdownOpen, setSuperAdminSiteDropdownOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [logoVisible, setLogoVisible] = useState(true);
+  const [siteLogoVisible, setSiteLogoVisible] = useState(true);
+  const [availableSites, setAvailableSites] = useState([]);
+  const [superAdminPrimarySite, setSuperAdminPrimarySite] = useState("");
+  const [failedSiteLogos, setFailedSiteLogos] = useState({});
+  const isSuperAdmin = session?.user?.role === "super_admin";
+  const userSiteLink = session?.user?.siteLink || "";
 
   useEffect(() => {
     const checkMobile = () => {
@@ -47,6 +63,55 @@ export default function DashboardLayout({ children, activeSection = "page-speed"
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
+  useEffect(() => {
+    const fetchAvailableSites = async () => {
+      if (!isSuperAdmin) {
+        setAvailableSites([]);
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/admin/site-integrations");
+        if (!res.ok) return;
+        const data = await res.json();
+        const sites = (data.sites || []).map((entry) =>
+          typeof entry === "string" ? entry : entry.siteLink
+        ).filter(Boolean);
+        const ownSite = data.superAdminSite || "";
+        setSuperAdminPrimarySite(ownSite);
+        setAvailableSites(sites);
+
+      } catch {
+        setAvailableSites([]);
+        setSuperAdminPrimarySite("");
+      }
+    };
+
+    fetchAvailableSites();
+  }, [isSuperAdmin]);
+
+  useEffect(() => {
+    if (!isSuperAdmin || selectedSite) return;
+    if (superAdminPrimarySite) {
+      onSelectedSiteChange?.(superAdminPrimarySite);
+      return;
+    }
+    if (availableSites.length > 0) {
+      onSelectedSiteChange?.(availableSites[0]);
+    }
+  }, [availableSites, isSuperAdmin, onSelectedSiteChange, selectedSite, superAdminPrimarySite]);
+
+  useEffect(() => {
+    if (!isSuperAdmin || !availableSites.length || !selectedSite) return;
+    if (!availableSites.includes(selectedSite)) {
+      onSelectedSiteChange?.(superAdminPrimarySite || availableSites[0]);
+    }
+  }, [availableSites, isSuperAdmin, onSelectedSiteChange, selectedSite, superAdminPrimarySite]);
+
+  useEffect(() => {
+    setSiteLogoVisible(true);
+  }, [userSiteLink]);
+
   const handleLogout = async () => {
     await signOut({ redirect: false });
     router.push("/login");
@@ -55,6 +120,38 @@ export default function DashboardLayout({ children, activeSection = "page-speed"
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
   };
+  const toggleSidebarCollapse = () => {
+    setIsSidebarCollapsed((prev) => !prev);
+  };
+
+  const getSiteHostName = (siteUrl) => {
+    if (!siteUrl) return "No Site Linked";
+    try {
+      return new URL(siteUrl).hostname.replace(/^www\./, "");
+    } catch {
+      return siteUrl.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] || "No Site Linked";
+    }
+  };
+
+  const getFaviconUrl = (siteUrl) => {
+    if (!siteUrl) return "";
+    try {
+      const hostname = new URL(siteUrl).hostname;
+      return `https://www.google.com/s2/favicons?domain=${hostname}&sz=64`;
+    } catch {
+      return "";
+    }
+  };
+
+  const markSiteLogoFailed = (siteUrl) => {
+    setFailedSiteLogos((prev) => ({ ...prev, [siteUrl]: true }));
+  };
+
+  const allMenuItems = [
+    ...mainMenuItems,
+    ...adminMenuItems.filter((item) => !item.role || session?.user?.role === item.role),
+  ];
+  const isCompactSidebar = !isMobile && isSidebarCollapsed;
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-50 transition-colors">
@@ -68,40 +165,194 @@ export default function DashboardLayout({ children, activeSection = "page-speed"
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-72 bg-gradient-to-b from-white via-white to-gray-50/50 dark:from-gray-50 dark:via-gray-50 dark:to-gray-100/50 border-r border-gray-200/80 dark:border-gray-300/80  transition-transform duration-300 ease-in-out ${
+        className={`fixed top-0 left-0 z-50 h-full w-72 ${isSidebarCollapsed ? "lg:w-20" : "lg:w-72"} bg-[#F0F0F0] pl-2 pr-1 pt-2 pb-2 transition-all duration-300 ease-in-out ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
         aria-label="Main navigation"
       >
-        <div className="flex flex-col h-full">
-          {/* Logo/Brand */}
-          <div className="flex items-center justify-between px-6 py-5 border-b border-gray-200/60 dark:border-gray-300/60 bg-gradient-to-r from-white to-gray-50/30 dark:from-gray-50 dark:to-gray-100/30">
-            <div className="flex items-center space-x-3.5">
-              <div className="relative">
-                <div className="w-12 h-12 bg-gradient-to-br from-[#0EFF2A] to-[#0BCC22] rounded-xl flex items-center justify-center shadow-lg shadow-[#0EFF2A]/20 ring-2 ring-[#0EFF2A]/10">
-                  <span className="text-white font-bold text-xl">C</span>
+        <div className="flex flex-col h-full bg-white rounded-xl">
+          {/* Logo/Brand (expanded only) */}
+          {!isCompactSidebar && (
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center w-full justify-between">
+                <div className="flex items-center">
+                  {logoVisible ? (
+                    <img
+                      src="/crossway-logo.png"
+                      alt="Crossway logo"
+                      width={60}
+                      height={60}
+                      className="rounded-md object-contain"
+                      onError={() => setLogoVisible(false)}
+                    />
+                  ) : (
+                    <div className="h-12 w-12 rounded-md bg-gray-100 flex items-center justify-center text-[10px] font-semibold text-gray-600">
+                      CW
+                    </div>
+                  )}
                 </div>
-                <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-[#0EFF2A] rounded-full border-2 border-white dark:border-gray-50 animate-pulse"></div>
+
+                {!isMobile && (
+                  <button
+                    onClick={toggleSidebarCollapse}
+                    className="ml-3 p-1.5 rounded-md hover:bg-gray-100 transition-colors"
+                    aria-label="Collapse sidebar"
+                    title="Collapse sidebar"
+                  >
+                    <img
+                      src="/collapse.png"
+                      alt="Collapse sidebar"
+                      width={18}
+                      height={18}
+                      className="object-contain"
+                    />
+                  </button>
+                )}
               </div>
-              <div>
-                <span className="font-bold text-xl text-gray-900 dark:text-black tracking-tight">
-                  Crossway
-                </span>
-                <p className="text-xs text-gray-600 dark:text-gray-700 font-medium mt-0.5">SEO Tools</p>
+              <div className="flex items-center">
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  className="lg:hidden text-gray-600 dark:text-gray-700 hover:text-gray-900 dark:hover:text-black p-2 rounded-lg hover:bg-gray-100/80 dark:hover:bg-gray-200/80 transition-all duration-200"
+                  aria-label="Close sidebar"
+                >
+                  <FiX className="w-5 h-5" />
+                </button>
               </div>
             </div>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="lg:hidden text-gray-600 dark:text-gray-700 hover:text-gray-900 dark:hover:text-black p-2 rounded-lg hover:bg-gray-100/80 dark:hover:bg-gray-200/80 transition-all duration-200"
-              aria-label="Close sidebar"
-            >
-              <FiX className="w-5 h-5" />
-            </button>
-          </div>
+          )}
+
+          {/* Compact Header (collapsed only) */}
+          {isCompactSidebar && (
+            <div className="hidden lg:flex items-center justify-center py-3 border-b border-gray-200">
+              <button
+                onClick={toggleSidebarCollapse}
+                className="p-1.5 rounded-md hover:bg-gray-100 transition-colors"
+                aria-label="Expand sidebar"
+                title="Expand sidebar"
+              >
+                <img
+                  src="/collapse.png"
+                  alt="Expand sidebar"
+                  width={18}
+                  height={18}
+                  className="object-contain rotate-180"
+                />
+              </button>
+            </div>
+          )}
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-4 space-y-1.5 overflow-y-auto" aria-label="Dashboard navigation">
-            {navigationItems.map((item) => {
+          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto" aria-label="Dashboard navigation">
+            {isSuperAdmin && !isCompactSidebar && (
+              <div className="px-3 pb-4 relative">
+                <p className="block text-[10px] font-semibold tracking-wider text-gray-500 uppercase mb-2">
+                  Site Dashboard
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSuperAdminSiteDropdownOpen((prev) => !prev)}
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#0EFF2A]/30 focus:border-[#0EFF2A] flex items-center justify-between gap-2"
+                  aria-haspopup="listbox"
+                  aria-expanded={superAdminSiteDropdownOpen}
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    {selectedSite && !failedSiteLogos[selectedSite] && getFaviconUrl(selectedSite) ? (
+                      <img
+                        src={getFaviconUrl(selectedSite)}
+                        alt={`${getSiteHostName(selectedSite)} logo`}
+                        width={18}
+                        height={18}
+                        className="h-[18px] w-[18px] rounded-sm object-contain shrink-0"
+                        onError={() => markSiteLogoFailed(selectedSite)}
+                      />
+                    ) : (
+                      <div className="h-[18px] w-[18px] rounded-sm bg-gray-100 flex items-center justify-center shrink-0">
+                        <FiGlobe className="w-3 h-3 text-gray-500" />
+                      </div>
+                    )}
+                    <span className="truncate">{selectedSite ? getSiteHostName(selectedSite) : "No Site Selected"}</span>
+                  </span>
+                  <FiChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${superAdminSiteDropdownOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {superAdminSiteDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => setSuperAdminSiteDropdownOpen(false)}
+                    />
+                    <div
+                      className="absolute left-3 right-3 top-[72px] z-20 rounded-lg border border-gray-200 bg-white shadow-xl max-h-64 overflow-y-auto"
+                      role="listbox"
+                      aria-label="Select site dashboard"
+                    >
+                      {availableSites.map((siteUrl) => (
+                        <button
+                          key={siteUrl}
+                          type="button"
+                          onClick={() => {
+                            onSelectedSiteChange?.(siteUrl);
+                            setSuperAdminSiteDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 ${
+                            selectedSite === siteUrl ? "bg-[#dff7de]" : ""
+                          }`}
+                        >
+                          {!failedSiteLogos[siteUrl] && getFaviconUrl(siteUrl) ? (
+                            <img
+                              src={getFaviconUrl(siteUrl)}
+                              alt={`${getSiteHostName(siteUrl)} logo`}
+                              width={18}
+                              height={18}
+                              className="h-[18px] w-[18px] rounded-sm object-contain shrink-0"
+                              onError={() => markSiteLogoFailed(siteUrl)}
+                            />
+                          ) : (
+                            <div className="h-[18px] w-[18px] rounded-sm bg-gray-100 flex items-center justify-center shrink-0">
+                              <FiGlobe className="w-3 h-3 text-gray-500" />
+                            </div>
+                          )}
+                          <span className="text-sm text-gray-800 truncate">{getSiteHostName(siteUrl)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {!isSuperAdmin && !isCompactSidebar && (
+              <div className="px-3 pb-4">
+                <p className="block text-[10px] font-semibold tracking-wider text-gray-500 uppercase mb-2">
+                  Current Site
+                </p>
+                <div className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 flex items-center gap-3">
+                  {siteLogoVisible && getFaviconUrl(userSiteLink) ? (
+                    <img
+                      src={getFaviconUrl(userSiteLink)}
+                      alt="Site logo"
+                      width={20}
+                      height={20}
+                      className="h-5 w-5 rounded-sm object-contain shrink-0"
+                      onError={() => setSiteLogoVisible(false)}
+                    />
+                  ) : (
+                    <div className="h-5 w-5 rounded-sm bg-gray-100 flex items-center justify-center shrink-0">
+                      <FiGlobe className="w-3.5 h-3.5 text-gray-500" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">{getSiteHostName(userSiteLink)}</p>
+                    {userSiteLink && (
+                      <p className="text-[11px] text-gray-500 truncate">{userSiteLink}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {!isCompactSidebar && (
+              <p className="px-3 pb-2 text-[10px] font-semibold tracking-wider text-gray-500 uppercase">Main Menu</p>
+            )}
+            {mainMenuItems.map((item) => {
               const IconComponent = item.icon;
               const isActive = activeSection === item.id;
               return (
@@ -115,38 +366,36 @@ export default function DashboardLayout({ children, activeSection = "page-speed"
                       setSidebarOpen(false);
                     }
                   }}
-                  className={`w-full flex items-center space-x-3.5 px-4 py-3 rounded-xl transition-all duration-300 group relative ${
+                  className={`w-full flex items-center ${isCompactSidebar ? "justify-center px-2" : "space-x-3.5 px-4"} py-3 rounded-xl transition-all duration-300 group relative ${
                     isActive
-                      ? "bg-gradient-to-r from-[#0EFF2A]/10 to-[#0EFF2A]/5 text-gray-900 dark:text-black shadow-md shadow-[#0EFF2A]/10 border border-[#0EFF2A]/20"
-                      : "text-gray-700 dark:text-gray-800 hover:bg-gray-50/80 dark:hover:bg-gray-200/50 hover:text-gray-900 dark:hover:text-black border border-transparent hover:border-gray-200/60 dark:hover:border-gray-300/60"
+                      ? "bg-[#dff7de] text-gray-900 border border-[#c4edc2]"
+                      : "text-gray-700 hover:bg-white hover:text-gray-900 border border-transparent"
                   }`}
                   aria-current={isActive ? "page" : undefined}
                 >
-                  <div className={`relative ${isActive ? "scale-110" : "group-hover:scale-110"} transition-transform duration-300`}>
-                    <IconComponent className={`w-5 h-5 ${isActive ? "text-[#0EFF2A]" : ""}`} />
-                    {isActive && (
-                      <div className="absolute -inset-1 bg-[#0EFF2A]/20 rounded-lg blur-sm -z-10"></div>
-                    )}
-                  </div>
-                  <span className={`font-semibold text-sm ${isActive ? "text-gray-900 dark:text-black" : ""} transition-colors duration-200`}>
-                    {item.label}
-                  </span>
-                  {isActive && (
-                    <div className="ml-auto w-2 h-2 rounded-full shadow-sm" style={{ backgroundColor: 'oklch(37.3% 0.034 259.733)' }} />
+                  <IconComponent className={`w-4 h-4 ${isActive ? "text-[#1d9c35]" : ""}`} />
+                  {!isCompactSidebar && (
+                    <span className={`font-medium text-sm ${isActive ? "text-gray-900" : ""} transition-colors duration-200`}>
+                      {item.label}
+                    </span>
                   )}
                 </button>
               );
             })}
             
             {/* Admin Navigation (Super Admin only) */}
-            {session?.user?.role === "super_admin" && (
+            {(session?.user?.role === "super_admin" || adminMenuItems.some((item) => !item.role)) && (
               <>
-                <div className="pt-4 pb-2 px-4">
-                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-600 uppercase tracking-wider">
-                    Administration
-                  </p>
-                </div>
-                {adminNavigationItems.map((item) => {
+                {!isCompactSidebar && (
+                  <div className="pt-4 pb-2 px-3">
+                    <p className="text-[10px] font-semibold tracking-wider text-gray-500 uppercase">
+                      Administration
+                    </p>
+                  </div>
+                )}
+                {adminMenuItems
+                  .filter((item) => !item.role || session?.user?.role === item.role)
+                  .map((item) => {
                   const IconComponent = item.icon;
                   const isActive = activeSection === item.id;
                   return (
@@ -160,24 +409,18 @@ export default function DashboardLayout({ children, activeSection = "page-speed"
                           setSidebarOpen(false);
                         }
                       }}
-                      className={`w-full flex items-center space-x-3.5 px-4 py-3 rounded-xl transition-all duration-300 group relative ${
+                      className={`w-full flex items-center ${isCompactSidebar ? "justify-center px-2" : "space-x-3.5 px-4"} py-3 rounded-xl transition-all duration-300 group relative ${
                         isActive
-                          ? "bg-gradient-to-r from-[#0EFF2A]/10 to-[#0EFF2A]/5 text-gray-900 dark:text-black shadow-md shadow-[#0EFF2A]/10 border border-[#0EFF2A]/20"
-                          : "text-gray-700 dark:text-gray-800 hover:bg-gray-50/80 dark:hover:bg-gray-200/50 hover:text-gray-900 dark:hover:text-black border border-transparent hover:border-gray-200/60 dark:hover:border-gray-300/60"
+                          ? "bg-[#dff7de] text-gray-900 border border-[#c4edc2]"
+                          : "text-gray-700 hover:bg-white hover:text-gray-900 border border-transparent"
                       }`}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      <div className={`relative ${isActive ? "scale-110" : "group-hover:scale-110"} transition-transform duration-300`}>
-                        <IconComponent className={`w-5 h-5 ${isActive ? "text-[#0EFF2A]" : ""}`} />
-                        {isActive && (
-                          <div className="absolute -inset-1 bg-[#0EFF2A]/20 rounded-lg blur-sm -z-10"></div>
-                        )}
-                      </div>
-                      <span className={`font-semibold text-sm ${isActive ? "text-gray-900 dark:text-black" : ""} transition-colors duration-200`}>
-                        {item.label}
-                      </span>
-                      {isActive && (
-                        <div className="ml-auto w-2 h-2 rounded-full shadow-sm" style={{ backgroundColor: 'oklch(37.3% 0.034 259.733)' }} />
+                      <IconComponent className={`w-4 h-4 ${isActive ? "text-[#1d9c35]" : ""}`} />
+                      {!isCompactSidebar && (
+                        <span className={`font-medium text-sm ${isActive ? "text-gray-900" : ""} transition-colors duration-200`}>
+                          {item.label}
+                        </span>
                       )}
                     </button>
                   );
@@ -187,130 +430,65 @@ export default function DashboardLayout({ children, activeSection = "page-speed"
           </nav>
 
           {/* Sidebar Footer */}
-          <div className="px-4 py-4 border-t border-gray-200/60 dark:border-gray-300/60">
-            <div className="bg-gradient-to-br from-gray-50 to-gray-100/50 dark:from-gray-100 dark:to-gray-200/50 rounded-xl p-4 border border-gray-200/60 dark:border-gray-300/60">
-              <p className="text-xs font-semibold text-gray-900 dark:text-black mb-1">Need Help?</p>
-              <p className="text-xs text-gray-600 dark:text-gray-700">Contact support for assistance</p>
+          <div className="px-4 py-4 border-t border-gray-200">
+            <div className="space-y-2 text-sm text-gray-600 relative">
+              <div className="relative">
+                <button
+                  onClick={() => setSettingsDropdownOpen((prev) => !prev)}
+                  className={`w-full flex items-center ${isCompactSidebar ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-2 hover:bg-white transition-colors`}
+                  aria-label="Settings menu"
+                  aria-expanded={settingsDropdownOpen}
+                  aria-haspopup="true"
+                >
+                  <FiSettings className="w-4 h-4" />
+                  {!isCompactSidebar && <span>Settings</span>}
+                </button>
+
+                {settingsDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => setSettingsDropdownOpen(false)}
+                    />
+                    <div className="absolute left-0 bottom-11 w-44 bg-white rounded-xl shadow-lg border border-gray-200 z-20 overflow-hidden">
+                      <div className="p-1.5">
+                        <button
+                          onClick={async () => {
+                            setSettingsDropdownOpen(false);
+                            await handleLogout();
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-50 text-red-600 transition-colors"
+                        >
+                          <FiLogOut className="w-4 h-4" />
+                          <span className="text-sm font-medium">Logout</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <button className={`w-full flex items-center ${isCompactSidebar ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-2 hover:bg-white transition-colors`}>
+                <FiHelpCircle className="w-4 h-4" />
+                {!isCompactSidebar && <span>Help Center</span>}
+              </button>
             </div>
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
-      <div className="lg:pl-72">
-        {/* Top Bar */}
-        <header className="sticky top-0 z-30 bg-white/80 dark:bg-gray-50/80 backdrop-blur-xl border-b border-gray-200/60 dark:border-gray-300/60 shadow-sm">
-          <div className="flex items-center justify-between px-6 py-4 lg:px-8 lg:py-4">
-            {/* Mobile menu button */}
-            <button
-              onClick={toggleSidebar}
-              className="lg:hidden text-gray-700 dark:text-gray-900 hover:text-gray-900 dark:hover:text-black p-2 rounded-xl hover:bg-gray-100/80 dark:hover:bg-gray-200/80 transition-all duration-200"
-              aria-label="Toggle sidebar"
-              aria-expanded={sidebarOpen}
-            >
-              <FiMenu className="w-5 h-5" />
-            </button>
-
-            {/* Page Title */}
-            <div className="flex items-center space-x-3">
-              <div className="hidden lg:block w-1 h-8 bg-gradient-to-b from-[#0EFF2A] to-[#0BCC22] rounded-full"></div>
-              <div>
-                <h1 className="text-xl lg:text-2xl font-bold text-gray-900 dark:text-black tracking-tight">
-                  {navigationItems.find((item) => item.id === activeSection)?.label || "Dashboard"}
-                </h1>
-                <p className="hidden lg:block text-xs text-gray-600 dark:text-gray-700 mt-0.5">
-                  Manage your SEO tools and reports
-                </p>
-              </div>
-            </div>
-
-            {/* Right side - Profile Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-                className="flex items-center space-x-3 p-1.5 pr-3 rounded-xl hover:bg-gray-100/80 dark:hover:bg-gray-200/80 transition-all duration-200 border border-transparent hover:border-gray-200/60 dark:hover:border-gray-300/60 group"
-                aria-label="User menu"
-                aria-expanded={profileDropdownOpen}
-                aria-haspopup="true"
-              >
-                <div className="relative">
-                  <div className="w-10 h-10 bg-gradient-to-br from-gray-800 to-gray-700 dark:from-gray-700 dark:to-gray-600 rounded-full flex items-center justify-center ring-2 ring-white dark:ring-gray-50 shadow-md group-hover:ring-[#0EFF2A]/30 transition-all duration-200">
-                    <span className="text-xs font-bold text-white">
-                      {session?.user?.name?.[0]?.toUpperCase() || session?.user?.email?.[0]?.toUpperCase() || "U"}
-                    </span>
-                  </div>
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#0EFF2A] rounded-full border-2 border-white dark:border-gray-50"></div>
-                </div>
-                <div className="hidden md:block text-left">
-                  <p className="text-sm font-semibold text-gray-900 dark:text-black">
-                    {session?.user?.name || "User"}
-                  </p>
-                  <p className="text-xs text-gray-600 dark:text-gray-700 truncate max-w-[120px]">
-                    {session?.user?.email}
-                  </p>
-                </div>
-                <FiChevronDown
-                  className={`w-4 h-4 text-gray-600 dark:text-gray-700 transition-transform duration-200 ${
-                    profileDropdownOpen ? "rotate-180" : ""
-                  }`}
-                />
-              </button>
-
-              {/* Profile Dropdown */}
-              {profileDropdownOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setProfileDropdownOpen(false)}
-                  />
-                  <div className="absolute right-0 mt-3 w-72 bg-white/95 dark:bg-gray-50/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-200/60 dark:border-gray-300/60 z-20 overflow-hidden">
-                    <div className="px-5 py-4 border-b border-gray-200/60 dark:border-gray-300/60 bg-gradient-to-r from-gray-50/50 to-white dark:from-gray-100/50 dark:to-gray-50">
-                      <div className="flex items-center space-x-3.5">
-                        <div className="relative">
-                          <div className="w-14 h-14 bg-gradient-to-br from-gray-800 to-gray-700 dark:from-gray-700 dark:to-gray-600 rounded-full flex items-center justify-center shadow-lg ring-2 ring-white dark:ring-gray-50">
-                            <span className="text-base font-bold text-white">
-                              {session?.user?.name?.[0]?.toUpperCase() || session?.user?.email?.[0]?.toUpperCase() || "U"}
-                            </span>
-                          </div>
-                          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-[#0EFF2A] rounded-full border-2 border-white dark:border-gray-50"></div>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-gray-900 dark:text-black truncate">
-                            {session?.user?.name || "User"}
-                          </p>
-                          <p className="text-xs text-gray-600 dark:text-gray-700 truncate mt-0.5">
-                            {session?.user?.email}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="p-2">
-                      <button className="w-full flex items-center space-x-3 px-4 py-2.5 rounded-xl hover:bg-gray-100/80 dark:hover:bg-gray-200/80 text-gray-800 dark:text-black transition-all duration-200 group">
-                        <FiUser className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                        <span className="text-sm font-medium">Update Profile</span>
-                      </button>
-                      <button className="w-full flex items-center space-x-3 px-4 py-2.5 rounded-xl hover:bg-gray-100/80 dark:hover:bg-gray-200/80 text-gray-800 dark:text-black transition-all duration-200 group">
-                        <FiImage className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                        <span className="text-sm font-medium">Change Photo</span>
-                      </button>
-                      <div className="border-t border-gray-200/60 dark:border-gray-300/60 my-2" />
-                      <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center space-x-3 px-4 py-2.5 rounded-xl hover:bg-red-50/80 dark:hover:bg-red-900/20 text-red-600 dark:text-red-500 transition-all duration-200 group"
-                      >
-                        <FiLogOut className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                        <span className="text-sm font-semibold">Sign Out</span>
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </header>
-
+      <div className={`${isSidebarCollapsed ? "lg:pl-20" : "lg:pl-72"}`}>
+        <button
+          onClick={toggleSidebar}
+          className="fixed top-4 left-4 z-30 lg:hidden text-gray-700 p-2 rounded-xl bg-white border border-gray-200 shadow-sm hover:bg-gray-50 transition-colors"
+          aria-label="Toggle sidebar"
+          aria-expanded={sidebarOpen}
+        >
+          <FiMenu className="w-5 h-5" />
+        </button>
+ 
         {/* Main Content Area */}
-        <main className="px-6 py-8 lg:px-8 lg:py-10 bg-gradient-to-b from-white via-gray-50/30 to-white dark:from-gray-50 dark:via-gray-100/30 dark:to-gray-50 min-h-[calc(100vh-80px)]">{children}</main>
+        <main className="pl-2 pr-2 pt-2 pb-2 lg:pl-1 lg:pr-2 lg:pt-2 lg:pb-2 bg-[#F0F0F0] min-h-screen">{children}</main>
       </div>
     </div>
   );

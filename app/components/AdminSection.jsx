@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { 
-  FiUsers, 
   FiUserPlus, 
   FiEdit, 
   FiTrash2, 
@@ -17,8 +16,9 @@ import {
   FiMail,
   FiClock,
   FiCheckCircle,
-  FiAlertCircle,
-  FiRefreshCw
+  FiRefreshCw,
+  FiMoreVertical,
+  FiFilter
 } from "react-icons/fi";
 
 const ROLES = {
@@ -26,6 +26,13 @@ const ROLES = {
   USER: "user",
   VIEWER: "viewer",
 };
+
+const DEFAULT_SMM_BASELINES = [
+  { platform: "facebook", accountHandle: "", followers: "" },
+  { platform: "instagram", accountHandle: "", followers: "" },
+  { platform: "youtube", accountHandle: "", followers: "" },
+  { platform: "x", accountHandle: "", followers: "" },
+];
 
 export default function AdminSection() {
   const { data: session } = useSession();
@@ -41,11 +48,33 @@ export default function AdminSection() {
     name: "",
     role: "user",
     siteLink: "",
+    gtmContainerId: "",
+    facebookPageId: "",
+    instagramUserId: "",
   });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [activeActionMenuUserId, setActiveActionMenuUserId] = useState(null);
+  const [siteIntegrationForm, setSiteIntegrationForm] = useState({
+    userId: "",
+    siteUrl: "",
+    propertyId: "",
+    emailOrVerification: "",
+  });
+  const [integratingSite, setIntegratingSite] = useState(false);
+  const [integrationPreview, setIntegrationPreview] = useState(null);
+  const [savingSmmBaseline, setSavingSmmBaseline] = useState(false);
+  const [fetchingSmmFromHandles, setFetchingSmmFromHandles] = useState(false);
+  const [loadingSmmBaseline, setLoadingSmmBaseline] = useState(false);
+  const [smmBaselines, setSmmBaselines] = useState(DEFAULT_SMM_BASELINES);
+  const [smmFetchStatusByPlatform, setSmmFetchStatusByPlatform] = useState({});
 
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
 
   const fetchUsers = async () => {
     try {
@@ -71,7 +100,12 @@ export default function AdminSection() {
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          gtmContainerId: formData.gtmContainerId || null,
+          facebookPageId: formData.facebookPageId || null,
+          instagramUserId: formData.instagramUserId || null,
+        }),
       });
 
       const data = await res.json();
@@ -81,7 +115,16 @@ export default function AdminSection() {
       }
 
       setShowCreateModal(false);
-      setFormData({ email: "", password: "", name: "", role: "user", siteLink: "" });
+      setFormData({
+        email: "",
+        password: "",
+        name: "",
+        role: "user",
+        siteLink: "",
+        gtmContainerId: "",
+        facebookPageId: "",
+        instagramUserId: "",
+      });
       fetchUsers();
     } catch (err) {
       setError(err.message);
@@ -93,15 +136,21 @@ export default function AdminSection() {
     setError("");
 
     try {
+      const payload = {
+        name: formData.name,
+        isActive: formData.isActive,
+        gtmContainerId: formData.gtmContainerId || null,
+        facebookPageId: formData.facebookPageId || null,
+        instagramUserId: formData.instagramUserId || null,
+      };
+      if (editingUser?.role !== ROLES.SUPER_ADMIN) {
+        payload.role = formData.role;
+      }
+
       const res = await fetch(`/api/admin/users/${editingUser.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: formData.name,
-          role: formData.role,
-          siteLink: formData.siteLink,
-          isActive: formData.isActive,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
@@ -110,8 +159,25 @@ export default function AdminSection() {
         throw new Error(data.error || "Failed to update user");
       }
 
+      if (editingUser?.role !== ROLES.SUPER_ADMIN) {
+        try {
+          await persistSmmBaseline(smmBaselines, { showMessage: false, clearMessages: false });
+        } catch {
+          // Don't block user profile update if baseline persistence fails.
+        }
+      }
+
       setEditingUser(null);
-      setFormData({ email: "", password: "", name: "", role: "user", siteLink: "" });
+      setFormData({
+        email: "",
+        password: "",
+        name: "",
+        role: "user",
+        siteLink: "",
+        gtmContainerId: "",
+        facebookPageId: "",
+        instagramUserId: "",
+      });
       fetchUsers();
     } catch (err) {
       setError(err.message);
@@ -147,8 +213,56 @@ export default function AdminSection() {
       name: user.name || "",
       role: user.role || "user",
       siteLink: user.siteLink || "",
+      gtmContainerId: user.gtmContainerId || "",
+      facebookPageId: user.facebookPageId || "",
+      instagramUserId: user.instagramUserId || "",
       isActive: user.isActive !== false,
     });
+    setSiteIntegrationForm({
+      userId: user.id,
+      siteUrl: user.siteLink || "",
+      propertyId: user.siteLink || "",
+      emailOrVerification: user.email || "",
+    });
+    setIntegrationPreview(null);
+    setSmmBaselines(
+      DEFAULT_SMM_BASELINES.map((row) => ({
+        ...row,
+        accountHandle: "",
+        followers: "",
+      }))
+    );
+    setSmmFetchStatusByPlatform({});
+    loadExistingSmmBaseline(user);
+  };
+
+  const loadExistingSmmBaseline = async (user) => {
+    if (!user?.id || !user?.siteLink) return;
+    setLoadingSmmBaseline(true);
+    try {
+      const query = new URLSearchParams({
+        userId: user.id,
+        siteUrl: user.siteLink,
+      });
+      const res = await fetch(`/api/admin/smm/baseline?${query.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const map = new Map((data.baselines || []).map((row) => [row.platform, row]));
+      setSmmBaselines(
+        DEFAULT_SMM_BASELINES.map((row) => ({
+          ...row,
+          accountHandle: map.get(row.platform)?.accountHandle || "",
+          followers:
+            map.get(row.platform)?.followers !== undefined
+              ? String(map.get(row.platform).followers)
+              : "",
+        }))
+      );
+    } catch {
+      // Keep current defaults if loading fails.
+    } finally {
+      setLoadingSmmBaseline(false);
+    }
   };
 
   const [resendingFor, setResendingFor] = useState(null);
@@ -211,6 +325,207 @@ export default function AdminSection() {
     }
   };
 
+  const handleSaveSiteIntegrationForUser = async () => {
+    if (!editingUser?.id) return;
+    if (editingUser?.role === ROLES.SUPER_ADMIN) {
+      setError("Site Integration is available only for regular users.");
+      return;
+    }
+    setError("");
+    setSuccessMessage("");
+    setIntegrationPreview(null);
+    setIntegratingSite(true);
+
+    try {
+      const res = await fetch("/api/admin/site-integrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: editingUser.id,
+          siteUrl: siteIntegrationForm.siteUrl,
+          propertyId: siteIntegrationForm.propertyId,
+          emailOrVerification: siteIntegrationForm.emailOrVerification,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.details || data.error || "Failed to save site integration");
+      }
+
+      setSuccessMessage(data.message || "Site integration saved successfully.");
+      setIntegrationPreview(data.preview || null);
+      setFormData((prev) => ({ ...prev, siteLink: data.site || prev.siteLink }));
+      setSiteIntegrationForm({
+        userId: editingUser.id,
+        siteUrl: data.site || siteIntegrationForm.siteUrl,
+        propertyId: data.site || siteIntegrationForm.propertyId,
+        emailOrVerification: siteIntegrationForm.emailOrVerification,
+      });
+      fetchUsers();
+      setTimeout(() => setSuccessMessage(""), 5000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIntegratingSite(false);
+    }
+  };
+
+  const handleSmmBaselineChange = (platform, key, value) => {
+    setSmmBaselines((prev) =>
+      prev.map((row) => (row.platform === platform ? { ...row, [key]: value } : row))
+    );
+    setSmmFetchStatusByPlatform((prev) => {
+      const next = { ...prev };
+      delete next[platform];
+      return next;
+    });
+  };
+
+  const persistSmmBaseline = async (
+    baselineRows,
+    { showMessage = true, clearMessages = true } = {}
+  ) => {
+    if (!editingUser?.id || editingUser?.role === ROLES.SUPER_ADMIN) return;
+    const targetSite = siteIntegrationForm.siteUrl || formData.siteLink || "";
+    if (!targetSite) {
+      throw new Error("Please save site integration first, then set SMM baseline.");
+    }
+
+    const rowsToPersist = baselineRows.filter((row) => {
+      const hasHandle = Boolean(String(row.accountHandle || "").trim());
+      const followers = Number(row.followers || 0);
+      return hasHandle || followers > 0;
+    });
+    if (!rowsToPersist.length) {
+      throw new Error("Please provide at least one handle or follower value before saving baseline.");
+    }
+
+    const res = await fetch("/api/admin/smm/baseline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: editingUser.id,
+        siteUrl: targetSite,
+        baselines: rowsToPersist.map((row) => ({
+          platform: row.platform,
+          accountName: editingUser.name || editingUser.email || "",
+          accountHandle: row.accountHandle,
+          followers: Number(row.followers || 0),
+        })),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to save SMM baseline.");
+    }
+
+    if (showMessage) {
+      setSuccessMessage("SMM baseline saved. Follower cards will show these numbers immediately.");
+      setTimeout(() => setSuccessMessage(""), 5000);
+    }
+    if (clearMessages) {
+      setError("");
+      setSuccessMessage("");
+    }
+  };
+
+  const handleSaveSmmBaseline = async () => {
+    setSavingSmmBaseline(true);
+    setError("");
+    setSuccessMessage("");
+    try {
+      await persistSmmBaseline(smmBaselines, { showMessage: true, clearMessages: false });
+    } catch (err) {
+      setError(err.message || "Failed to save SMM baseline.");
+    } finally {
+      setSavingSmmBaseline(false);
+    }
+  };
+
+  const handleFetchSmmFromHandles = async () => {
+    if (!editingUser?.id || editingUser?.role === ROLES.SUPER_ADMIN) return;
+    const targetSite = siteIntegrationForm.siteUrl || formData.siteLink || "";
+    if (!targetSite) {
+      setError("Please save site integration first, then fetch followers by handles.");
+      return;
+    }
+
+    const withHandles = smmBaselines.filter((row) => String(row.accountHandle || "").trim());
+    if (!withHandles.length) {
+      setError("Please enter at least one account handle to fetch followers.");
+      return;
+    }
+
+    setFetchingSmmFromHandles(true);
+    setError("");
+    setSuccessMessage("");
+    setSmmFetchStatusByPlatform(
+      withHandles.reduce((acc, row) => {
+        acc[row.platform] = { status: "loading", reason: "Fetching..." };
+        return acc;
+      }, {})
+    );
+    try {
+      const res = await fetch("/api/admin/smm/fetch-handles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: editingUser.id,
+          siteUrl: targetSite,
+          facebookPageId: formData.facebookPageId || "",
+          instagramUserId: formData.instagramUserId || "",
+          accounts: withHandles.map((row) => ({
+            platform: row.platform,
+            accountHandle: row.accountHandle,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to fetch followers from handles.");
+      }
+
+      const statusMap = {};
+      (data.resolved || []).forEach((item) => {
+        statusMap[item.platform] = {
+          status: "resolved",
+          reason: `Followers found: ${Number(item.followers || 0).toLocaleString("en-US")}`,
+        };
+      });
+      (data.skipped || []).forEach((item) => {
+        statusMap[item.platform] = {
+          status: "skipped",
+          reason: item.reason || "Not resolved from handle.",
+        };
+      });
+      setSmmFetchStatusByPlatform((prev) => ({ ...prev, ...statusMap }));
+
+      if (Array.isArray(data.resolved) && data.resolved.length > 0) {
+        const mergedRows = smmBaselines.map((row) => {
+            const matched = data.resolved.find((item) => item.platform === row.platform);
+            if (!matched) return row;
+            return {
+              ...row,
+              accountHandle: matched.accountHandle || row.accountHandle,
+              followers: Number(matched.followers || 0),
+            };
+          });
+        setSmmBaselines(mergedRows);
+        await persistSmmBaseline(mergedRows, { showMessage: false, clearMessages: false });
+        setSuccessMessage("Followers fetched and saved. SMM fields will stay populated.");
+      } else if (Array.isArray(data.skipped) && data.skipped.length > 0) {
+        setError(data.skipped[0].reason || "No followers resolved from provided handles.");
+      } else {
+        setError("No followers resolved from provided handles.");
+      }
+      setTimeout(() => setSuccessMessage(""), 5000);
+    } catch (err) {
+      setError(err.message || "Failed to fetch followers from handles.");
+    } finally {
+      setFetchingSmmFromHandles(false);
+    }
+  };
+
   const getStatusBadge = (user) => {
     if (user.emailVerified || user.status === "active") {
       return {
@@ -247,7 +562,18 @@ export default function AdminSection() {
       (user.name && user.name.toLowerCase().includes(searchLower)) ||
       (user.role && user.role.toLowerCase().includes(searchLower))
     );
+  }).sort((a, b) => {
+    if (a.role === ROLES.SUPER_ADMIN && b.role !== ROLES.SUPER_ADMIN) return -1;
+    if (a.role !== ROLES.SUPER_ADMIN && b.role === ROLES.SUPER_ADMIN) return 1;
+    return (a.name || a.email || "").localeCompare(b.name || b.email || "");
   });
+
+  const USERS_PER_PAGE = 12;
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / USERS_PER_PAGE));
+  const paginatedUsers = filteredUsers.slice(
+    (currentPage - 1) * USERS_PER_PAGE,
+    currentPage * USERS_PER_PAGE
+  );
 
   const getRoleBadgeColor = (role) => {
     switch (role) {
@@ -275,37 +601,6 @@ export default function AdminSection() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-black">User Management</h2>
-          <p className="text-sm text-gray-600 dark:text-gray-700 mt-1">
-            Manage users, roles, and site access
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleCleanup}
-            disabled={cleaningUp}
-            className="flex items-center space-x-2 px-4 py-2 bg-gray-100 dark:bg-gray-200 hover:bg-gray-200 dark:hover:bg-gray-300 text-gray-700 dark:text-gray-800 rounded-xl font-semibold transition-colors disabled:opacity-50"
-            title="Delete unverified users older than 7 days"
-          >
-            <FiRefreshCw className={`w-4 h-4 ${cleaningUp ? "animate-spin" : ""}`} />
-            <span className="hidden sm:inline">Cleanup Pending</span>
-          </button>
-          <button
-            onClick={() => {
-              setShowCreateModal(true);
-              setFormData({ email: "", password: "", name: "", role: "user", siteLink: "" });
-            }}
-            className="flex items-center space-x-2 px-4 py-2 bg-[#0EFF2A] hover:bg-[#0BCC22] text-white rounded-xl font-semibold transition-colors shadow-lg shadow-[#0EFF2A]/20"
-          >
-            <FiUserPlus className="w-5 h-5" />
-            <span>Create User</span>
-          </button>
-        </div>
-      </div>
-
       {/* Error Message */}
       {error && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 px-4 py-3 rounded-xl">
@@ -320,57 +615,88 @@ export default function AdminSection() {
         </div>
       )}
 
-      {/* Search */}
-      <div className="relative">
-        <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-        <input
-          type="text"
-          placeholder="Search users by email, name, or role..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-3 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
-        />
-      </div>
-
       {/* Users Table */}
-      <div className="bg-white dark:bg-gray-50 rounded-2xl border border-gray-200 dark:border-gray-300 shadow-lg overflow-hidden">
+      <div className="rounded-xl border border-gray-200 bg-[#ffffff] overflow-hidden">
+        <div className="px-4 sm:px-6 pb-4 border-b border-gray-200 py-5">
+          <h2 className="text-2xl font-bold text-gray-900">User Management</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            Manage users, roles, and site access
+          </p>
+        </div>
+        <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="text-sm text-gray-700 font-semibold">All Users <span className="text-gray-500 font-medium">{filteredUsers.length}</span></div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
+                placeholder="Search"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-44 pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent"
+              />
+            </div>
+            <button className="inline-flex items-center gap-1 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 bg-white">
+              <FiFilter className="w-4 h-4" />
+              Filters
+            </button>
+            <button
+              onClick={() => {
+                setShowCreateModal(true);
+                setFormData({
+                  email: "",
+                  password: "",
+                  name: "",
+                  role: "user",
+                  siteLink: "",
+                  gtmContainerId: "",
+                  facebookPageId: "",
+                  instagramUserId: "",
+                });
+              }}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm bg-black text-white"
+            >
+              Add user +
+            </button>
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-100 dark:to-gray-200/50 border-b border-gray-200 dark:border-gray-300">
+            <thead className="bg-white border-b border-gray-200">
               <tr>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-800 uppercase tracking-wider">
-                  User
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                  Username
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-800 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Role
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-800 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Site Link
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-800 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="px-6 py-4 text-right text-xs font-semibold text-gray-700 dark:text-gray-800 uppercase tracking-wider">
+                <th className="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-300">
-              {filteredUsers.length === 0 ? (
+              {paginatedUsers.length === 0 ? (
                 <tr>
                   <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
                     No users found
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((user) => (
-                  <tr key={user.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-100/50 transition-colors">
+                paginatedUsers.map((user) => (
+                  <tr key={user.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4">
                       <div>
-                        <p className="text-sm font-semibold text-gray-900 dark:text-black">
+                        <p className="text-sm font-semibold text-gray-900">
                           {user.name || "No name"}
                         </p>
-                        <p className="text-xs text-gray-600 dark:text-gray-700">{user.email}</p>
+                        <p className="text-xs text-gray-500">{user.email}</p>
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -408,37 +734,57 @@ export default function AdminSection() {
                       })()}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end space-x-2">
-                        {/* Resend verification button for pending users */}
-                        {(user.status === "pending" || user.emailVerified === false) && user.role !== "super_admin" && (
-                          <button
-                            onClick={() => handleResendVerification(user.id)}
-                            disabled={resendingFor === user.id}
-                            className="p-2 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg transition-colors disabled:opacity-50"
-                            title="Resend verification email"
-                          >
-                            {resendingFor === user.id ? (
-                              <FiRefreshCw className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <FiMail className="w-4 h-4" />
-                            )}
-                          </button>
-                        )}
+                      <div className="relative inline-block">
                         <button
-                          onClick={() => handleEdit(user)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                          title="Edit user"
+                          onClick={() =>
+                            setActiveActionMenuUserId((prev) => (prev === user.id ? null : user.id))
+                          }
+                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-600"
+                          aria-label="Open actions"
                         >
-                          <FiEdit className="w-4 h-4" />
+                          <FiMoreVertical className="w-4 h-4" />
                         </button>
-                        {user.id !== session?.user?.id && (
-                          <button
-                            onClick={() => handleDeleteUser(user.id)}
-                            className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                            title="Delete user"
-                          >
-                            <FiTrash2 className="w-4 h-4" />
-                          </button>
+                        {activeActionMenuUserId === user.id && (
+                          <div className="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                            <button
+                              onClick={() => {
+                                setActiveActionMenuUserId(null);
+                                handleEdit(user);
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                            >
+                              View profile
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveActionMenuUserId(null);
+                                handleEdit(user);
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                            >
+                              Change permission
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveActionMenuUserId(null);
+                                handleEdit(user);
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                            >
+                              Edit details
+                            </button>
+                            {user.id !== session?.user?.id && (
+                              <button
+                                onClick={() => {
+                                  setActiveActionMenuUserId(null);
+                                  handleDeleteUser(user.id);
+                                }}
+                                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                              >
+                                Delete user
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </td>
@@ -448,12 +794,41 @@ export default function AdminSection() {
             </tbody>
           </table>
         </div>
+        <div className="px-4 sm:px-6 py-3 border-t border-gray-200 flex items-center justify-center gap-2 text-sm">
+          <button
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="px-2 py-1 text-gray-500 disabled:opacity-40"
+          >
+            Back
+          </button>
+          {Array.from({ length: Math.min(5, totalPages) }).map((_, idx) => {
+            const page = idx + 1;
+            return (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={`h-7 w-7 rounded ${currentPage === page ? "bg-black text-white" : "text-gray-600 hover:bg-gray-100"}`}
+              >
+                {page}
+              </button>
+            );
+          })}
+          {totalPages > 5 && <span className="text-gray-500">... {totalPages}</span>}
+          <button
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="px-2 py-1 text-gray-500 disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
       </div>
 
       {/* Create/Edit Modal */}
       {(showCreateModal || editingUser) && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-50 rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white dark:bg-gray-50 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 dark:border-gray-300">
               <h3 className="text-xl font-bold text-gray-900 dark:text-black">
                 {editingUser ? "Edit User" : "Create New User"}
@@ -511,25 +886,247 @@ export default function AdminSection() {
                 <select
                   value={formData.role}
                   onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                  disabled={editingUser?.role === ROLES.SUPER_ADMIN}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
                 >
+                  {editingUser?.role === ROLES.SUPER_ADMIN && (
+                    <option value="super_admin">Super Admin</option>
+                  )}
                   <option value="user">User</option>
                   <option value="viewer">Viewer (Read-only)</option>
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
-                  Site Link
-                </label>
-                <input
-                  type="url"
-                  value={formData.siteLink}
-                  onChange={(e) => setFormData({ ...formData, siteLink: e.target.value })}
-                  placeholder="https://example.com"
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
-                />
-              </div>
+              {!editingUser && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
+                    Site Link
+                  </label>
+                  <input
+                    type="url"
+                    value={formData.siteLink}
+                    onChange={(e) => setFormData({ ...formData, siteLink: e.target.value })}
+                    placeholder="https://example.com"
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
+                  />
+                </div>
+              )}
+
+              {(!editingUser || editingUser.role !== ROLES.SUPER_ADMIN) && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
+                      GTM Container ID
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.gtmContainerId || ""}
+                      onChange={(e) => setFormData({ ...formData, gtmContainerId: e.target.value })}
+                      placeholder="GTM-XXXXXXX"
+                      className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Add GTM container ID to ingest social metrics via `/api/smm/collect`.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
+                      Facebook Page ID (for Graph API)
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.facebookPageId || ""}
+                      onChange={(e) => setFormData({ ...formData, facebookPageId: e.target.value })}
+                      placeholder="e.g. 61558883521953"
+                      className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
+                      Instagram User ID (for Graph API)
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.instagramUserId || ""}
+                      onChange={(e) => setFormData({ ...formData, instagramUserId: e.target.value })}
+                      placeholder="e.g. 17841400000000000"
+                      className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {editingUser && editingUser.role !== ROLES.SUPER_ADMIN && (
+                <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-gray-900">Site Integration</p>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      User Name / Email (optional for verification)
+                    </label>
+                    <input
+                      type="text"
+                      value={siteIntegrationForm.emailOrVerification}
+                      onChange={(e) =>
+                        setSiteIntegrationForm((prev) => ({ ...prev, emailOrVerification: e.target.value }))
+                      }
+                      placeholder={editingUser.email || "user@example.com or google-site-verification=..."}
+                      className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white text-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Site URL
+                    </label>
+                    <input
+                      type="url"
+                      value={siteIntegrationForm.siteUrl}
+                      onChange={(e) =>
+                        setSiteIntegrationForm((prev) => ({ ...prev, siteUrl: e.target.value }))
+                      }
+                      placeholder="https://example.com"
+                      className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white text-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Property ID
+                    </label>
+                    <input
+                      type="text"
+                      value={siteIntegrationForm.propertyId}
+                      onChange={(e) =>
+                        setSiteIntegrationForm((prev) => ({ ...prev, propertyId: e.target.value }))
+                      }
+                      placeholder="sc-domain:example.com"
+                      className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white text-gray-900"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveSiteIntegrationForUser}
+                    disabled={integratingSite}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-semibold disabled:opacity-60"
+                  >
+                    <FiSave className="w-4 h-4" />
+                    {integratingSite ? "Saving..." : "Save Integration"}
+                  </button>
+                  {integrationPreview && (
+                    <div className="grid grid-cols-2 gap-3 text-sm pt-1">
+                      <div className="rounded-lg border border-gray-200 px-3 py-2">
+                        <p className="text-gray-500">Clicks</p>
+                        <p className="font-semibold text-gray-900">{integrationPreview.totalClicks}</p>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 px-3 py-2">
+                        <p className="text-gray-500">Impressions</p>
+                        <p className="font-semibold text-gray-900">{integrationPreview.totalImpressions}</p>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 px-3 py-2">
+                        <p className="text-gray-500">Avg CTR</p>
+                        <p className="font-semibold text-gray-900">
+                          {(integrationPreview.averageCtr * 100).toFixed(2)}%
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 px-3 py-2">
+                        <p className="text-gray-500">Avg Position</p>
+                        <p className="font-semibold text-gray-900">
+                          {integrationPreview.averagePosition.toFixed(1)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                    Send GTM-collected platform metrics to <span className="font-mono">/api/smm/collect</span> with this
+                    user&apos;s GTM ID and site URL.
+                  </div>
+                </div>
+              )}
+
+              {editingUser && editingUser.role !== ROLES.SUPER_ADMIN && (
+                <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-gray-900">SMM Baseline Setup (Followers)</p>
+                  <p className="text-xs text-gray-600">
+                    Optional quick-start: enter current followers so SMM cards show numbers immediately before GTM events start.
+                  </p>
+                  {loadingSmmBaseline && (
+                    <p className="text-xs text-gray-500">Loading saved SMM baseline...</p>
+                  )}
+                  {smmBaselines.map((row) => (
+                    <div key={row.platform} className="space-y-1.5">
+                      <div className="grid grid-cols-1 md:grid-cols-[120px_1fr_140px] gap-2">
+                      <div className="px-3 py-2 rounded border border-gray-200 bg-gray-50 text-sm capitalize text-gray-700">
+                        {row.platform}
+                      </div>
+                      <input
+                        type="text"
+                        value={row.accountHandle}
+                        onChange={(e) => handleSmmBaselineChange(row.platform, "accountHandle", e.target.value)}
+                        placeholder={
+                          row.platform === "x"
+                            ? "@handle, profile link, or numeric X user ID (optional)"
+                            : "@handle or profile link (optional)"
+                        }
+                        className="px-3 py-2 border border-gray-200 rounded text-sm focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        value={row.followers}
+                        onChange={(e) => handleSmmBaselineChange(row.platform, "followers", e.target.value)}
+                        placeholder="Followers"
+                        className="px-3 py-2 border border-gray-200 rounded text-sm focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent"
+                      />
+                      </div>
+                      {smmFetchStatusByPlatform[row.platform] && (
+                        <div className="flex items-center gap-2 pl-1">
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                              smmFetchStatusByPlatform[row.platform].status === "resolved"
+                                ? "bg-green-100 text-green-700"
+                                : smmFetchStatusByPlatform[row.platform].status === "loading"
+                                  ? "bg-blue-100 text-blue-700"
+                                  : "bg-amber-100 text-amber-700"
+                            }`}
+                          >
+                            {smmFetchStatusByPlatform[row.platform].status}
+                          </span>
+                          <span className="text-[11px] text-gray-600">
+                            {smmFetchStatusByPlatform[row.platform].reason}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handleFetchSmmFromHandles}
+                    disabled={fetchingSmmFromHandles}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 text-gray-800 bg-white rounded-xl font-semibold disabled:opacity-60"
+                  >
+                    <FiRefreshCw className={`w-4 h-4 ${fetchingSmmFromHandles ? "animate-spin" : ""}`} />
+                    {fetchingSmmFromHandles ? "Fetching from handles..." : "Fetch from Handles"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveSmmBaseline}
+                    disabled={savingSmmBaseline}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-semibold disabled:opacity-60"
+                  >
+                    <FiSave className="w-4 h-4" />
+                    {savingSmmBaseline ? "Saving baseline..." : "Save SMM Baseline"}
+                  </button>
+                  <p className="text-xs text-gray-500">
+                    Auto-fetch supports YouTube and best-effort Facebook/Instagram/X from handles/links. For consistent production-grade data, connect official APIs and keep GTM ingestion enabled.
+                  </p>
+                </div>
+              )}
+
+              {editingUser && editingUser.role === ROLES.SUPER_ADMIN && (
+                <div className="rounded-xl border border-gray-200 p-4">
+                  <p className="text-sm text-gray-600">
+                    Site Integration fields are hidden for Super Admin accounts.
+                  </p>
+                </div>
+              )}
 
               {editingUser && (
                 <div>
@@ -560,7 +1157,16 @@ export default function AdminSection() {
                   onClick={() => {
                     setShowCreateModal(false);
                     setEditingUser(null);
-                    setFormData({ email: "", password: "", name: "", role: "user", siteLink: "" });
+                    setFormData({
+                      email: "",
+                      password: "",
+                      name: "",
+                      role: "user",
+                      siteLink: "",
+                      gtmContainerId: "",
+                      facebookPageId: "",
+                      instagramUserId: "",
+                    });
                   }}
                   className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-gray-100 dark:bg-gray-200 hover:bg-gray-200 dark:hover:bg-gray-300 text-gray-700 dark:text-gray-800 rounded-xl font-semibold transition-colors"
                 >

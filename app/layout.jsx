@@ -2,24 +2,7 @@ import { Nunito } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 
-// Validate environment on server startup (non-blocking)
-if (typeof window === "undefined") {
-  try {
-    const { validateStartup } = require("../lib/startup");
-    // Run validation asynchronously without blocking
-    validateStartup().catch((err) => {
-      // Only log in development, errors are already handled in validateStartup
-      if (process.env.NODE_ENV === "development") {
-        console.warn("Startup validation warning (non-blocking):", err.message);
-      }
-    });
-  } catch (err) {
-    // Ignore errors in build time or if module can't be loaded
-    if (process.env.NODE_ENV === "development") {
-      console.warn("Could not run startup validation:", err.message);
-    }
-  }
-}
+// Production env validation runs in instrumentation.js (server start).
 
 const nunito = Nunito({
   variable: "--font-nunito",
@@ -32,6 +15,9 @@ export const metadata = {
   description: "Generate comprehensive PDF reports with Google PageSpeed Insights data. Professional SEO analysis tools for website performance optimization.",
   keywords: "PageSpeed Insights, SEO tools, website performance, PDF reports",
   authors: [{ name: "Crossway SEO Tools" }],
+  verification: {
+    google: "sUHFadG3VzndzY2egA0pPwpKMysL5qSCXuTy3st_pjY",
+  },
   openGraph: {
     title: "Crossway SEO Tools - PageSpeed Reports",
     description: "Generate comprehensive PDF reports with Google PageSpeed Insights data.",
@@ -47,6 +33,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body
+        suppressHydrationWarning
         className={`${nunito.variable} antialiased`}
       >
         <Providers>{children}</Providers>

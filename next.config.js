@@ -1,8 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Use webpack instead of Turbopack (Turbopack has issues with MongoDB on Windows)
+  // Use webpack instead of Turbopack for stable dev behavior on Windows
   // Do NOT include turbopack config when using webpack - it causes conflicts
-  
+
+  // Docker / self-hosted: produces a minimal server bundle (see DEPLOYMENT.md)
+  output: process.env.DOCKER_BUILD === "1" ? "standalone" : undefined,
+
   // Production optimizations
   compress: true,
   poweredByHeader: false,
@@ -59,9 +62,9 @@ const nextConfig = {
     ];
   },
   
-  // Ensure MongoDB and other native modules are handled correctly
+  // Ensure Node-only modules are handled correctly
   webpack: (config, { isServer }) => {
-    // Exclude MongoDB and other native modules from client-side bundling
+    // Exclude server-only native modules from client-side bundling
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
@@ -72,7 +75,7 @@ const nextConfig = {
       };
     }
     
-    // Ensure MongoDB is only bundled server-side
+    // Keep server-only externals in the server bundle
     if (isServer) {
       config.externals = config.externals || [];
     }

@@ -1,9 +1,8 @@
 import { requireAuth } from "../../../lib/middleware/auth";
 import { getPageSpeedReport } from "../../../lib/pagespeed";
 import { generateReportPdf } from "../../../lib/pdf";
-import { saveReport } from "../../../lib/reports";
 import { ROLES } from "../../../lib/rbac";
-import { isValidUrl, sanitizeString, validateAndNormalizeSiteUrl } from "../../../lib/validation";
+import { sanitizeString, validateAndNormalizeSiteUrl } from "../../../lib/validation";
 import { checkRateLimit, getClientIdentifier } from "../../../lib/rateLimit";
 import { logger } from "../../../lib/logger";
 
@@ -45,7 +44,6 @@ export async function POST(req) {
     }
 
     const format = req.nextUrl.searchParams.get("format") ?? "pdf";
-    const saveToDb = req.nextUrl.searchParams.get("save") !== "false"; // Default to true
 
     let body;
     try {
@@ -76,8 +74,8 @@ export async function POST(req) {
     }
 
     const url = sanitizeString(rawUrl, 2048); // Max URL length
-
-    if (!isValidUrl(url)) {
+    const requestValidation = validateAndNormalizeSiteUrl(url);
+    if (!requestValidation.valid) {
       return new Response(
         JSON.stringify({
           error: "Invalid URL format. Please provide a valid HTTP or HTTPS URL.",
@@ -88,6 +86,8 @@ export async function POST(req) {
         }
       );
     }
+
+    const normalizedUrl = requestValidation.normalized;
 
     // Access control: Regular users can only generate reports for their own siteLink
     const userRole = session.user.role || ROLES.USER;
@@ -106,7 +106,7 @@ export async function POST(req) {
       }
       
       const userSiteValidation = validateAndNormalizeSiteUrl(userSiteLink);
-      const requestUrlValidation = validateAndNormalizeSiteUrl(url);
+      const requestUrlValidation = validateAndNormalizeSiteUrl(normalizedUrl);
       
       if (!userSiteValidation.valid || !requestUrlValidation.valid) {
         return new Response(
@@ -133,15 +133,39 @@ export async function POST(req) {
       }
     }
 
-    let pagespeedData = null;
-
     try {
-      logger.info("Generating PageSpeed report", { url, userId: session.user.id });
-      pagespeedData = await getPageSpeedReport(url);
+      logger.info("Generating PageSpeed report", { url: normalizedUrl, userId: session.user.id });
+      const pagespeedData = await getPageSpeedReport(normalizedUrl);
+      const report = {
+        url: normalizedUrl,
+        generatedAt: new Date().toISOString(),
+        pagespeed: pagespeedData,
+      };
+
+      if (format === "json") {
+        return new Response(JSON.stringify(report), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const pdfBuffer = await generateReportPdf(report);
+      // Database save path intentionally disabled until a stable reports persistence module is implemented.
+      const pdfArray = new Uint8Array(pdfBuffer);
+
+      return new Response(pdfArray, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition":
+            'attachment; filename="pagespeed-report.pdf"',
+          "Content-Length": String(pdfBuffer.length),
+        },
+      });
     } catch (err) {
       logger.error("PageSpeed API error", { 
         error: err.message, 
-        url,
+        url: normalizedUrl,
         userId: session.user.id 
       });
       
@@ -158,83 +182,6 @@ export async function POST(req) {
       );
     }
 
-    const report = {
-      url,
-      generatedAt: new Date().toISOString(),
-      pagespeed: pagespeedData,
-    };
-
-    if (format === "json") {
-      return new Response(JSON.stringify(report), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    try {
-      const pdfBuffer = await generateReportPdf(report);
-
-      // Save report to database if requested
-      let reportId = null;
-      if (saveToDb) {
-        try {
-          const savedReport = await saveReport(
-            session.user.id,
-            url,
-            report,
-            pdfBuffer
-          );
-          reportId = savedReport.id;
-        } catch (saveErr) {
-          // Log but don't fail the request if saving fails
-          if (process.env.NODE_ENV === "development") {
-            console.error("Failed to save report to database:", saveErr);
-          }
-        }
-      }
-
-      // Wrap Node Buffer in a Uint8Array so it is valid BodyInit
-      const pdfArray = new Uint8Array(pdfBuffer);
-
-      return new Response(pdfArray, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition":
-            'attachment; filename="pagespeed-report.pdf"',
-          "Content-Length": String(pdfBuffer.length),
-          ...(reportId && { "X-Report-Id": reportId }),
-        },
-      });
-    } catch (err) {
-      if (err.message === "Unauthorized") {
-        return new Response(
-          JSON.stringify({ error: "Unauthorized. Please log in." }),
-          {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      }
-      
-      logger.error("PDF generation error", { 
-        error: err.message, 
-        url,
-        userId: session.user.id 
-      });
-      
-      const errorMessage = err?.message ?? String(err);
-      return new Response(
-        JSON.stringify({
-          error: "Failed to generate PDF report.",
-          details: process.env.NODE_ENV === "development" ? errorMessage : "An error occurred while generating the PDF. Please try again.",
-        }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-    }
   } catch (err) {
     logger.error("Report generation error", { 
       error: err.message,

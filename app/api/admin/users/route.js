@@ -44,7 +44,16 @@ export async function POST(req) {
     const session = await requireSuperAdmin();
     
     const body = await req.json();
-    const { email, password, name, role = "user", siteLink = null } = body;
+    const {
+      email,
+      password,
+      name,
+      role = "user",
+      siteLink = null,
+      gtmContainerId = null,
+      facebookPageId = null,
+      instagramUserId = null,
+    } = body;
     
     if (!email || !password) {
       return new Response(
@@ -97,7 +106,8 @@ export async function POST(req) {
       name || null,
       role,
       siteLink,
-      session.user.id
+      session.user.id,
+      { gtmContainerId, facebookPageId, instagramUserId }
     );
 
     // Generate verification token
@@ -129,6 +139,9 @@ export async function POST(req) {
           name: user.name,
           role: user.role,
           siteLink: user.siteLink,
+          gtmContainerId: user.gtmContainerId || null,
+          facebookPageId: user.facebookPageId || null,
+          instagramUserId: user.instagramUserId || null,
           emailVerified: user.emailVerified,
           status: user.status,
         },

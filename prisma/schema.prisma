@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String                   @id @default(cuid()) @db.VarChar(191)
+  email                String                   @unique @db.VarChar(191)
+  password             String                   @map("password_hash") @db.Text
+  name                 String?                  @db.VarChar(255)
+  role                 String                   @default("user") @db.VarChar(50)
+  siteLink             String?                  @map("site_link") @db.VarChar(512)
+  gtmContainerId       String?                  @map("gtm_container_id") @db.VarChar(64)
+  facebookPageId       String?                  @map("facebook_page_id") @db.VarChar(191)
+  instagramUserId      String?                  @map("instagram_user_id") @db.VarChar(191)
+  isActive             Boolean                  @default(false) @map("is_active")
+  emailVerified        Boolean                  @default(false) @map("email_verified")
+  status               String                   @default("pending") @db.VarChar(50)
+  emailVerifiedAt      DateTime?                @map("email_verified_at")
+  createdBy            String?                  @map("created_by") @db.VarChar(191)
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+  deletedAt            DateTime?                @map("deleted_at")
+  createdByUser        User?                    @relation("UserCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdUsers         User[]                   @relation("UserCreatedBy")
+  accessibleSites      UserAccessibleSite[]
+  verificationLogs     VerificationLog[]
+  smmDailyStats        SocialMediaDailyStat[]
+
+  @@index([role])
+  @@index([isActive], map: "users_is_active_idx")
+  @@index([createdBy], map: "users_created_by_idx")
+  @@index([siteLink], map: "users_site_link_idx")
+  @@index([gtmContainerId], map: "users_gtm_container_id_idx")
+  @@index([facebookPageId], map: "users_facebook_page_id_idx")
+  @@index([instagramUserId], map: "users_instagram_user_id_idx")
+  @@index([status, emailVerified, createdAt], map: "users_status_verification_created_idx")
+  @@map("users")
+}
+
+model UserAccessibleSite {
+  id        String   @id @default(cuid()) @db.VarChar(191)
+  userId    String   @map("user_id") @db.VarChar(191)
+  siteLink  String   @map("site_link") @db.VarChar(512)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([userId, siteLink], map: "user_site_unique")
+  @@index([siteLink], map: "user_accessible_sites_site_link_idx")
+  @@map("user_accessible_sites")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid()) @db.VarChar(191)
+  email     String    @db.VarChar(191)
+  token     String    @unique @db.VarChar(191)
+  expiresAt DateTime  @map("expires_at")
+  used      Boolean   @default(false)
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([email], map: "password_reset_tokens_email_idx")
+  @@index([expiresAt], map: "password_reset_tokens_expires_at_idx")
+  @@index([used], map: "password_reset_tokens_used_idx")
+  @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id          String    @id @default(cuid()) @db.VarChar(191)
+  email       String    @db.VarChar(191)
+  token       String    @unique @db.VarChar(191)
+  expiresAt   DateTime  @map("expires_at")
+  used        Boolean   @default(false)
+  usedAt      DateTime? @map("used_at")
+  invalidatedAt DateTime? @map("invalidated_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([email], map: "email_verification_tokens_email_idx")
+  @@index([expiresAt], map: "email_verification_tokens_expires_at_idx")
+  @@index([used], map: "email_verification_tokens_used_idx")
+  @@map("email_verification_tokens")
+}
+
+model VerificationLog {
+  id         String    @id @default(cuid()) @db.VarChar(191)
+  token      String?   @db.VarChar(255)
+  email      String    @db.VarChar(191)
+  userId     String?   @map("user_id") @db.VarChar(191)
+  success    Boolean
+  reason     String?   @db.VarChar(100)
+  ip         String?   @db.VarChar(255)
+  attemptedAt DateTime @default(now()) @map("attempted_at")
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([email], map: "verification_logs_email_idx")
+  @@index([attemptedAt], map: "verification_logs_attempted_at_idx")
+  @@map("verification_logs")
+}
+
+model SocialMediaDailyStat {
+  id           String   @id @default(cuid()) @db.VarChar(191)
+  userId       String   @map("user_id") @db.VarChar(191)
+  siteLink     String   @map("site_link") @db.VarChar(512)
+  platform     String   @db.VarChar(50)
+  accountName  String?  @map("account_name") @db.VarChar(191)
+  accountHandle String? @map("account_handle") @db.VarChar(191)
+  statDate     DateTime @map("stat_date") @db.Date
+  followers    Int      @default(0)
+  reach        Int      @default(0)
+  engagements  Int      @default(0)
+  queuedPosts  Int      @default(0) @map("queued_posts")
+  queuedReels  Int      @default(0) @map("queued_reels")
+  source       String?  @db.VarChar(100)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([userId, siteLink, platform, statDate], map: "smm_user_site_platform_date_unique")
+  @@index([siteLink, statDate], map: "smm_site_date_idx")
+  @@index([platform, statDate], map: "smm_platform_date_idx")
+  @@map("social_media_daily_stats")
+}

@@ -2,28 +2,10 @@ import { getServerSession } from "next-auth";
 import { getSearchConsoleReport } from "../../../lib/searchconsole";
 import { authOptions } from "../auth/[...nextauth]/route";
 import { ROLES } from "../../../lib/rbac";
+import { isValidUrl, normalizeSiteOrigin } from "../../../lib/validation";
 
 // Ensure this route runs in the Node.js runtime
 export const runtime = "nodejs";
-
-function isValidUrl(url) {
-  try {
-    new URL(url);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function normalizeSiteUrl(url) {
-  try {
-    const urlObj = new URL(url);
-    // Remove trailing slash and ensure proper format
-    return `${urlObj.protocol}//${urlObj.host}`;
-  } catch {
-    return url;
-  }
-}
 
 export async function POST(req) {
   // Check authentication
@@ -65,7 +47,18 @@ export async function POST(req) {
     );
   }
 
-  const normalizedUrl = normalizeSiteUrl(url);
+  const normalizedUrl = normalizeSiteOrigin(url);
+  if (!normalizedUrl) {
+    return new Response(
+      JSON.stringify({
+        error: "Invalid or missing 'url'. Please provide a fully-qualified URL.",
+      }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
   const daysToFetch = days && typeof days === "number" ? Math.min(Math.max(days, 1), 90) : 30;
 
   // Access control: Regular users can only query their own siteLink
@@ -84,7 +77,7 @@ export async function POST(req) {
       );
     }
     
-    const normalizedUserSiteLink = normalizeSiteUrl(userSiteLink);
+    const normalizedUserSiteLink = normalizeSiteOrigin(userSiteLink);
     if (normalizedUrl !== normalizedUserSiteLink) {
       return new Response(
         JSON.stringify({

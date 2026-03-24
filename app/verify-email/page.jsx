@@ -8,9 +8,11 @@ import { Suspense } from "react";
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  const missingTokenMessage = "No verification token provided. Please check the link from your email.";
+  const initialHasToken = Boolean(token);
 
-  const [status, setStatus] = useState("verifying"); // verifying | success | already_verified | error
-  const [message, setMessage] = useState("");
+  const [status, setStatus] = useState(initialHasToken ? "verifying" : "error"); // verifying | success | already_verified | error
+  const [message, setMessage] = useState(initialHasToken ? "" : missingTokenMessage);
   const [userName, setUserName] = useState("");
   const hasRun = useRef(false);
 
@@ -19,8 +21,6 @@ function VerifyEmailContent() {
     hasRun.current = true;
 
     if (!token) {
-      setStatus("error");
-      setMessage("No verification token provided. Please check the link from your email.");
       return;
     }
 
@@ -42,7 +42,7 @@ function VerifyEmailContent() {
           setStatus("error");
           setMessage(data.error || "Verification failed.");
         }
-      } catch (err) {
+      } catch {
         setStatus("error");
         setMessage("An unexpected error occurred. Please try again.");
       }

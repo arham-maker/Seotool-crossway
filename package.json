@@ -7,16 +7,21 @@
     "build": "next build --webpack",
     "build:win": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "db:migrate:mongo-to-mysql": "node scripts/migrate-mongo-to-mysql.js"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.2",
     "axios": "^1.7.0",
     "bcryptjs": "^2.4.3",
     "googleapis": "^133.0.0",
-    "mongodb": "^6.3.0",
     "next": "16.1.0",
-    "nodemailer": "^7.0.7",
     "next-auth": "^4.24.10",
+    "nodemailer": "^7.0.7",
     "pdf-lib": "^1.17.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -24,9 +29,11 @@
     "recharts": "^2.12.7"
   },
   "devDependencies": {
+    "mongodb": "^6.3.0",
     "@tailwindcss/postcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "16.1.0",
+    "prisma": "^6.19.2",
     "tailwindcss": "^4"
   }
 }

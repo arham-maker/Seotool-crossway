@@ -8,48 +8,35 @@ export async function middleware(req) {
   
   // In production, require proper secret
   if (isProduction && (!secret || secret === "your-secret-key-change-in-production")) {
-    console.error("NEXTAUTH_SECRET is not properly configured in Vercel environment variables");
+    console.error("NEXTAUTH_SECRET is not properly configured for production");
     return new NextResponse(
       `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8" />
   <title>Configuration Error</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
     h1 { color: #e11d48; }
     code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
     pre { background: #1f2937; color: #f9fafb; padding: 15px; border-radius: 8px; overflow-x: auto; }
-    a { color: #2563eb; }
   </style>
 </head>
 <body>
-  <h1>⚠️ Server Configuration Error</h1>
-  <p><strong>NEXTAUTH_SECRET</strong> is missing or not properly configured in Vercel.</p>
-  
-  <h2>Quick Fix:</h2>
+  <h1>Server configuration error</h1>
+  <p><strong>NEXTAUTH_SECRET</strong> is missing or still set to the placeholder value.</p>
+  <h2>Fix</h2>
   <ol>
-    <li>Go to your Vercel project: <a href="https://vercel.com/dashboard" target="_blank">Vercel Dashboard</a></li>
-    <li>Navigate to <strong>Settings</strong> → <strong>Environment Variables</strong></li>
-    <li>Add <code>NEXTAUTH_SECRET</code> with a secure random value</li>
-    <li>Generate a secret using: <code>openssl rand -base64 32</code></li>
-    <li>Also set <code>NEXTAUTH_URL</code> to: <code>https://seotool-crossway.vercel.app</code></li>
-    <li>Redeploy your application</li>
+    <li>Set <code>NEXTAUTH_SECRET</code> to a random string (at least 32 characters), e.g. <code>openssl rand -base64 32</code></li>
+    <li>Set <code>NEXTAUTH_URL</code> to your public site URL (e.g. <code>https://your-domain.com</code>)</li>
+    <li>Add these to your host&apos;s environment (Vercel / Docker / PM2 / systemd) and redeploy or restart</li>
   </ol>
-  
-  <h2>Required Environment Variables:</h2>
-  <ul>
-    <li><code>NEXTAUTH_SECRET</code> - Generate with: <code>openssl rand -base64 32</code></li>
-    <li><code>NEXTAUTH_URL</code> - <code>https://seotool-crossway.vercel.app</code></li>
-    <li><code>MONGODB_URI</code> - Your MongoDB connection string</li>
-    <li><code>PAGESPEED_API_KEY</code> - Your Google API key</li>
-  </ul>
-  
-  <p>See <code>VERCEL_SETUP.md</code> in the repository for detailed instructions.</p>
+  <p>See <code>DEPLOYMENT.md</code> in the repository.</p>
 </body>
 </html>`,
-      { 
+      {
         status: 500,
-        headers: { "Content-Type": "text/html; charset=utf-8" }
+        headers: { "Content-Type": "text/html; charset=utf-8" },
       }
     );
   }

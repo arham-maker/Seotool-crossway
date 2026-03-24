@@ -20,17 +20,17 @@ export async function GET(req, { params }) {
       );
     }
     
-    // Remove password from response
-    const { password, ...userData } = user;
-    
     return new Response(
       JSON.stringify({
         user: {
-          id: user._id.toString(),
+          id: user.id,
           email: user.email,
           name: user.name,
           role: user.role || "user",
           siteLink: user.siteLink || null,
+          gtmContainerId: user.gtmContainerId || null,
+          facebookPageId: user.facebookPageId || null,
+          instagramUserId: user.instagramUserId || null,
           accessibleSites: user.accessibleSites || [],
           isActive: user.isActive !== false,
           emailVerified: user.emailVerified || false,
@@ -131,11 +131,14 @@ export async function PATCH(req, { params }) {
       JSON.stringify({
         message: "User updated successfully",
         user: {
-          id: user._id.toString(),
+          id: user.id,
           email: user.email,
           name: user.name,
           role: user.role || "user",
           siteLink: user.siteLink || null,
+          gtmContainerId: user.gtmContainerId || null,
+          facebookPageId: user.facebookPageId || null,
+          instagramUserId: user.instagramUserId || null,
           accessibleSites: user.accessibleSites || [],
           isActive: user.isActive !== false,
           emailVerified: user.emailVerified || false,
