@@ -296,7 +296,7 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
           label="Average CTR"
           value={formatPct(payload?.totals?.averageCtr)}
           checked={activeMetrics.ctr}
-          color="text-gray-700"
+          color="text-gray-7000"
           bg="bg-white"
           onToggle={() => toggleMetric("ctr")}
         />
