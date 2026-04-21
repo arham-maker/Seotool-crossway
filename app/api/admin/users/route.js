@@ -53,6 +53,7 @@ export async function POST(req) {
       gtmContainerId = null,
       facebookPageId = null,
       instagramUserId = null,
+      isActive = false,
     } = body;
     
     if (!email || !password) {
@@ -76,7 +77,7 @@ export async function POST(req) {
     }
     
     // Validate role
-    const validRoles = [ROLES.USER, ROLES.VIEWER];
+    const validRoles = [ROLES.USER, ROLES.VIEWER, ROLES.SMM];
     if (role && !validRoles.includes(role)) {
       return new Response(
         JSON.stringify({ error: `Invalid role. Must be one of: ${validRoles.join(", ")}` }),
@@ -107,7 +108,7 @@ export async function POST(req) {
       role,
       siteLink,
       session.user.id,
-      { gtmContainerId, facebookPageId, instagramUserId }
+      { gtmContainerId, facebookPageId, instagramUserId, isActive: Boolean(isActive) }
     );
 
     // Generate verification token

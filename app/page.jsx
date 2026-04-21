@@ -8,6 +8,7 @@ import DashboardSection from "./components/DashboardSection";
 import PerformanceReportSection from "./components/PerformanceReportSection";
 import SearchConsoleSection from "./components/SearchConsoleSection";
 import AdminSection from "./components/AdminSection";
+import AdminApprovalsSection from "./components/AdminApprovalsSection";
 import SmmStatisticsSection from "./components/SmmStatisticsSection";
 
 export default function Home() {
@@ -69,6 +70,12 @@ export default function Home() {
         return <SmmStatisticsSection selectedSite={selectedSite} />;
       case "user-management":
         return session?.user?.role === "super_admin" ? <AdminSection /> : <DashboardSection />;
+      case "admin-approvals":
+        return session?.user?.role === "super_admin" ? (
+          <AdminApprovalsSection />
+        ) : (
+          <DashboardSection selectedSite={selectedSite} />
+        );
       case "reports":
         return <PerformanceReportSection />;
       default:

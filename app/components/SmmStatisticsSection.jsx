@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Area, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { FiGlobe, FiRefreshCw } from "react-icons/fi";
+import { isSmmRole } from "../../lib/rbac";
+import SmmApprovalCardsGrid from "./SmmApprovalCardsGrid";
 
 const RANGE_OPTIONS = [
   { id: "7d", label: "7 days" },
@@ -119,6 +121,7 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
   const { data: session } = useSession();
   const isSuperAdmin = session?.user?.role === "super_admin";
   const ownSite = session?.user?.siteLink || "";
+  const showSmmChartOnly = isSmmRole(session?.user?.role);
 
   const [range, setRange] = useState("3m");
   const [platform, setPlatform] = useState("all");
@@ -272,58 +275,70 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
           </div>
 
           <div className="mt-5 rounded-xl border border-gray-200 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-semibold text-gray-900">Post/Reels Analytics</p>
-              <div className="flex items-center gap-3 text-[11px] text-gray-600">
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-2 w-2 rounded-full bg-[#33d56a]" />
-                  Reels
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-2 w-2 rounded-full bg-[#7a79d8]" />
-                  Posts
-                </span>
-              </div>
-            </div>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={monthlyChartData}>
-                  <defs>
-                    <linearGradient id="reelsGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#39d86e" stopOpacity={0.32} />
-                      <stop offset="95%" stopColor="#39d86e" stopOpacity={0.04} />
-                    </linearGradient>
-                    <linearGradient id="postsGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#7a79d8" stopOpacity={0.24} />
-                      <stop offset="95%" stopColor="#7a79d8" stopOpacity={0.03} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="2 2" stroke="#d7d7d7" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<AnalyticsTooltip />} cursor={{ stroke: "#bfc3ca", strokeWidth: 1 }} />
-                  <Area type="monotone" dataKey="reels" stroke="transparent" fill="url(#reelsGradient)" />
-                  <Area type="monotone" dataKey="posts" stroke="transparent" fill="url(#postsGradient)" />
-                  <Line
-                    type="monotone"
-                    dataKey="reels"
-                    stroke="#33d56a"
-                    strokeWidth={2.5}
-                    dot={false}
-                    activeDot={{ r: 3, fill: "#33d56a" }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="posts"
-                    stroke="#7a79d8"
-                    strokeWidth={2.2}
-                    dot={false}
-                    activeDot={{ r: 3, fill: "#7a79d8" }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <p className="mt-2 text-[11px] text-gray-500">Followers total: {formatNumber(totalFollowers)}</p>
+            {showSmmChartOnly ? (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-semibold text-gray-900">Post/Reels Analytics</p>
+                  <div className="flex items-center gap-3 text-[11px] text-gray-600">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-[#33d56a]" />
+                      Reels
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-[#7a79d8]" />
+                      Posts
+                    </span>
+                  </div>
+                </div>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={monthlyChartData}>
+                      <defs>
+                        <linearGradient id="reelsGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#39d86e" stopOpacity={0.32} />
+                          <stop offset="95%" stopColor="#39d86e" stopOpacity={0.04} />
+                        </linearGradient>
+                        <linearGradient id="postsGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#7a79d8" stopOpacity={0.24} />
+                          <stop offset="95%" stopColor="#7a79d8" stopOpacity={0.03} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="2 2" stroke="#d7d7d7" />
+                      <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<AnalyticsTooltip />} cursor={{ stroke: "#bfc3ca", strokeWidth: 1 }} />
+                      <Area type="monotone" dataKey="reels" stroke="transparent" fill="url(#reelsGradient)" />
+                      <Area type="monotone" dataKey="posts" stroke="transparent" fill="url(#postsGradient)" />
+                      <Line
+                        type="monotone"
+                        dataKey="reels"
+                        stroke="#33d56a"
+                        strokeWidth={2.5}
+                        dot={false}
+                        activeDot={{ r: 3, fill: "#33d56a" }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="posts"
+                        stroke="#7a79d8"
+                        strokeWidth={2.2}
+                        dot={false}
+                        activeDot={{ r: 3, fill: "#7a79d8" }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="mt-2 text-[11px] text-gray-500">Followers total: {formatNumber(totalFollowers)}</p>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-semibold text-gray-900">Approvals</p>
+                  <span className="text-[11px] text-gray-500 hidden sm:inline">Assigned items and status</span>
+                </div>
+                <SmmApprovalCardsGrid isSuperAdmin={isSuperAdmin} activeSite={activeSite} />
+              </>
+            )}
           </div>
 
           <div className="mt-5 rounded-xl border border-gray-200 overflow-hidden bg-white">

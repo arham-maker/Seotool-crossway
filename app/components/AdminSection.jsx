@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import { validatePassword } from "../../lib/validation";
 import { 
   FiUserPlus, 
   FiEdit, 
@@ -25,6 +26,7 @@ const ROLES = {
   SUPER_ADMIN: "super_admin",
   USER: "user",
   VIEWER: "viewer",
+  SMM: "smm",
 };
 
 const DEFAULT_SMM_BASELINES = [
@@ -51,6 +53,7 @@ export default function AdminSection() {
     gtmContainerId: "",
     facebookPageId: "",
     instagramUserId: "",
+    isActive: false,
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [activeActionMenuUserId, setActiveActionMenuUserId] = useState(null);
@@ -92,50 +95,20 @@ export default function AdminSection() {
     }
   };
 
-  const handleCreateUser = async (e) => {
-    e.preventDefault();
-    setError("");
-
-    try {
-      const res = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          gtmContainerId: formData.gtmContainerId || null,
-          facebookPageId: formData.facebookPageId || null,
-          instagramUserId: formData.instagramUserId || null,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to create user");
-      }
-
-      setShowCreateModal(false);
-      setFormData({
-        email: "",
-        password: "",
-        name: "",
-        role: "user",
-        siteLink: "",
-        gtmContainerId: "",
-        facebookPageId: "",
-        instagramUserId: "",
-      });
-      fetchUsers();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
   const handleUpdateUser = async (e) => {
     e.preventDefault();
     setError("");
 
     try {
+      const newPassword = String(formData.password || "").trim();
+      if (newPassword) {
+        const pwdCheck = validatePassword(newPassword);
+        if (!pwdCheck.valid) {
+          setError(pwdCheck.errors.join("; ") || "Invalid password.");
+          return;
+        }
+      }
+
       const payload = {
         name: formData.name,
         isActive: formData.isActive,
@@ -145,6 +118,13 @@ export default function AdminSection() {
       };
       if (editingUser?.role !== ROLES.SUPER_ADMIN) {
         payload.role = formData.role;
+      }
+      const siteTrim = String(formData.siteLink || "").trim();
+      if (siteTrim) {
+        payload.siteLink = siteTrim;
+      }
+      if (newPassword) {
+        payload.password = newPassword;
       }
 
       const res = await fetch(`/api/admin/users/${editingUser.id}`, {
@@ -177,6 +157,7 @@ export default function AdminSection() {
         gtmContainerId: "",
         facebookPageId: "",
         instagramUserId: "",
+        isActive: false,
       });
       fetchUsers();
     } catch (err) {
@@ -325,48 +306,62 @@ export default function AdminSection() {
     }
   };
 
-  const handleSaveSiteIntegrationForUser = async () => {
-    if (!editingUser?.id) return;
-    if (editingUser?.role === ROLES.SUPER_ADMIN) {
-      setError("Site Integration is available only for regular users.");
-      return;
+  const saveSiteIntegrationForUserId = async (userId, { silent = false } = {}) => {
+    if (!silent) {
+      setError("");
+      setSuccessMessage("");
+      setIntegrationPreview(null);
+      setIntegratingSite(true);
     }
-    setError("");
-    setSuccessMessage("");
-    setIntegrationPreview(null);
-    setIntegratingSite(true);
-
     try {
       const res = await fetch("/api/admin/site-integrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: editingUser.id,
+          userId,
           siteUrl: siteIntegrationForm.siteUrl,
           propertyId: siteIntegrationForm.propertyId,
-          emailOrVerification: siteIntegrationForm.emailOrVerification,
+          emailOrVerification:
+            String(siteIntegrationForm.emailOrVerification || "").trim() || formData.email,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.details || data.error || "Failed to save site integration");
       }
-
-      setSuccessMessage(data.message || "Site integration saved successfully.");
-      setIntegrationPreview(data.preview || null);
-      setFormData((prev) => ({ ...prev, siteLink: data.site || prev.siteLink }));
-      setSiteIntegrationForm({
-        userId: editingUser.id,
-        siteUrl: data.site || siteIntegrationForm.siteUrl,
-        propertyId: data.site || siteIntegrationForm.propertyId,
-        emailOrVerification: siteIntegrationForm.emailOrVerification,
-      });
-      fetchUsers();
-      setTimeout(() => setSuccessMessage(""), 5000);
+      if (!silent) {
+        setSuccessMessage(data.message || "Site integration saved successfully.");
+        setIntegrationPreview(data.preview || null);
+        setFormData((prev) => ({ ...prev, siteLink: data.site || prev.siteLink }));
+        setSiteIntegrationForm((prev) => ({
+          ...prev,
+          userId,
+          siteUrl: data.site || prev.siteUrl,
+          propertyId: data.site || prev.propertyId,
+          emailOrVerification: prev.emailOrVerification,
+        }));
+        fetchUsers();
+        setTimeout(() => setSuccessMessage(""), 5000);
+      }
+      return data;
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
+      throw err;
     } finally {
-      setIntegratingSite(false);
+      if (!silent) setIntegratingSite(false);
+    }
+  };
+
+  const handleSaveSiteIntegrationForUser = async () => {
+    if (!editingUser?.id) return;
+    if (editingUser?.role === ROLES.SUPER_ADMIN) {
+      setError("Site Integration is available only for regular users.");
+      return;
+    }
+    try {
+      await saveSiteIntegrationForUserId(editingUser.id, { silent: false });
+    } catch {
+      // Error surfaced in saveSiteIntegrationForUserId
     }
   };
 
@@ -383,12 +378,28 @@ export default function AdminSection() {
 
   const persistSmmBaseline = async (
     baselineRows,
-    { showMessage = true, clearMessages = true } = {}
+    {
+      showMessage = true,
+      clearMessages = true,
+      forUserId,
+      forSiteUrl,
+      accountNameFallback,
+      accountEmailFallback,
+    } = {}
   ) => {
-    if (!editingUser?.id || editingUser?.role === ROLES.SUPER_ADMIN) return;
-    const targetSite = siteIntegrationForm.siteUrl || formData.siteLink || "";
+    const userId = forUserId ?? editingUser?.id;
+    if (!userId) {
+      throw new Error("User is required to save SMM baseline.");
+    }
+    if (!forUserId && editingUser?.role === ROLES.SUPER_ADMIN) return;
+
+    const targetSite =
+      String(forSiteUrl || "").trim() ||
+      siteIntegrationForm.siteUrl ||
+      formData.siteLink ||
+      "";
     if (!targetSite) {
-      throw new Error("Please save site integration first, then set SMM baseline.");
+      throw new Error("Please set Site URL or Site Link before saving SMM baseline.");
     }
 
     const rowsToPersist = baselineRows.filter((row) => {
@@ -400,15 +411,22 @@ export default function AdminSection() {
       throw new Error("Please provide at least one handle or follower value before saving baseline.");
     }
 
+    const accountLabel =
+      String(accountNameFallback || "").trim() ||
+      editingUser?.name ||
+      String(accountEmailFallback || "").trim() ||
+      editingUser?.email ||
+      "";
+
     const res = await fetch("/api/admin/smm/baseline", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        userId: editingUser.id,
+        userId,
         siteUrl: targetSite,
         baselines: rowsToPersist.map((row) => ({
           platform: row.platform,
-          accountName: editingUser.name || editingUser.email || "",
+          accountName: accountLabel,
           accountHandle: row.accountHandle,
           followers: Number(row.followers || 0),
         })),
@@ -443,7 +461,11 @@ export default function AdminSection() {
   };
 
   const handleFetchSmmFromHandles = async () => {
-    if (!editingUser?.id || editingUser?.role === ROLES.SUPER_ADMIN) return;
+    if (!editingUser?.id) {
+      setError("Create the user first, then use Edit to fetch follower counts from handles.");
+      return;
+    }
+    if (editingUser?.role === ROLES.SUPER_ADMIN) return;
     const targetSite = siteIntegrationForm.siteUrl || formData.siteLink || "";
     if (!targetSite) {
       setError("Please save site integration first, then fetch followers by handles.");
@@ -526,6 +548,125 @@ export default function AdminSection() {
     }
   };
 
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    try {
+      const pwdCheck = validatePassword(formData.password);
+      if (!pwdCheck.valid) {
+        setError(pwdCheck.errors.join("; ") || "Invalid password.");
+        return;
+      }
+
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: formData.email,
+          password: formData.password,
+          name: formData.name,
+          role: formData.role,
+          siteLink: formData.siteLink || null,
+          isActive: formData.isActive === true,
+          gtmContainerId: formData.gtmContainerId || null,
+          facebookPageId: formData.facebookPageId || null,
+          instagramUserId: formData.instagramUserId || null,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to create user");
+      }
+
+      const newUser = data.user;
+      const followUpErrors = [];
+
+      if (newUser?.id) {
+        const hasIntegrationInput =
+          String(siteIntegrationForm.siteUrl || "").trim() ||
+          String(siteIntegrationForm.propertyId || "").trim();
+
+        let resolvedSiteForSmm = String(
+          formData.siteLink || siteIntegrationForm.siteUrl || ""
+        ).trim();
+
+        if (hasIntegrationInput) {
+          try {
+            const integData = await saveSiteIntegrationForUserId(newUser.id, { silent: true });
+            if (integData?.site) {
+              resolvedSiteForSmm = String(integData.site).trim() || resolvedSiteForSmm;
+            }
+          } catch (intErr) {
+            followUpErrors.push(`Site integration: ${intErr.message}`);
+          }
+        }
+
+        const rowsToPersist = smmBaselines.filter((row) => {
+          const hasHandle = Boolean(String(row.accountHandle || "").trim());
+          const followers = Number(row.followers || 0);
+          return hasHandle || followers > 0;
+        });
+
+        if (rowsToPersist.length > 0 && resolvedSiteForSmm) {
+          try {
+            await persistSmmBaseline(smmBaselines, {
+              showMessage: false,
+              clearMessages: false,
+              forUserId: newUser.id,
+              forSiteUrl: resolvedSiteForSmm,
+              accountNameFallback: formData.name,
+              accountEmailFallback: formData.email,
+            });
+          } catch (smmErr) {
+            followUpErrors.push(`SMM baseline: ${smmErr.message}`);
+          }
+        } else if (rowsToPersist.length > 0 && !resolvedSiteForSmm) {
+          followUpErrors.push(
+            "SMM baseline: add a Site Link or Site URL / Property ID so baseline can be saved."
+          );
+        }
+      }
+
+      setShowCreateModal(false);
+      setFormData({
+        email: "",
+        password: "",
+        name: "",
+        role: "user",
+        siteLink: "",
+        gtmContainerId: "",
+        facebookPageId: "",
+        instagramUserId: "",
+        isActive: false,
+      });
+      setSiteIntegrationForm({
+        userId: "",
+        siteUrl: "",
+        propertyId: "",
+        emailOrVerification: "",
+      });
+      setIntegrationPreview(null);
+      setSmmBaselines(
+        DEFAULT_SMM_BASELINES.map((row) => ({
+          ...row,
+          accountHandle: "",
+          followers: "",
+        }))
+      );
+      setSmmFetchStatusByPlatform({});
+      fetchUsers();
+
+      if (followUpErrors.length) {
+        setError(`User was created. ${followUpErrors.join(" ")}`);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const getStatusBadge = (user) => {
     if (user.emailVerified || user.status === "active") {
       return {
@@ -587,6 +728,10 @@ export default function AdminSection() {
         return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
     }
   };
+
+  const showFullUserSetup = Boolean(
+    !editingUser || (editingUser && editingUser.role !== ROLES.SUPER_ADMIN)
+  );
 
   if (loading) {
     return (
@@ -652,7 +797,23 @@ export default function AdminSection() {
                   gtmContainerId: "",
                   facebookPageId: "",
                   instagramUserId: "",
+                  isActive: false,
                 });
+                setSiteIntegrationForm({
+                  userId: "",
+                  siteUrl: "",
+                  propertyId: "",
+                  emailOrVerification: "",
+                });
+                setIntegrationPreview(null);
+                setSmmBaselines(
+                  DEFAULT_SMM_BASELINES.map((row) => ({
+                    ...row,
+                    accountHandle: "",
+                    followers: "",
+                  }))
+                );
+                setSmmFetchStatusByPlatform({});
               }}
               className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm bg-black text-white"
             >
@@ -852,7 +1013,7 @@ export default function AdminSection() {
                 />
               </div>
 
-              {!editingUser && (
+              {!editingUser ? (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
                     Password
@@ -864,6 +1025,23 @@ export default function AdminSection() {
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
                   />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
+                    New password (optional)
+                  </label>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="Leave blank to keep current password"
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Only fill this in if you want to reset the user&apos;s password.
+                  </p>
                 </div>
               )}
 
@@ -894,25 +1072,30 @@ export default function AdminSection() {
                   )}
                   <option value="user">User</option>
                   <option value="viewer">Viewer (Read-only)</option>
+                  <option value="smm">SMM (Social media manager)</option>
                 </select>
               </div>
 
-              {!editingUser && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
-                    Site Link
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.siteLink}
-                    onChange={(e) => setFormData({ ...formData, siteLink: e.target.value })}
-                    placeholder="https://example.com"
-                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
+                  Site Link
+                </label>
+                <input
+                  type="url"
+                  value={formData.siteLink}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setFormData((prev) => ({ ...prev, siteLink: v }));
+                    if (showFullUserSetup) {
+                      setSiteIntegrationForm((prev) => ({ ...prev, siteUrl: v }));
+                    }
+                  }}
+                  placeholder="https://example.com"
+                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-300 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white dark:bg-gray-50 text-gray-900 dark:text-black"
+                />
+              </div>
 
-              {(!editingUser || editingUser.role !== ROLES.SUPER_ADMIN) && (
+              {showFullUserSetup && (
                 <div className="space-y-3">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 dark:text-gray-800 mb-2">
@@ -956,9 +1139,14 @@ export default function AdminSection() {
                 </div>
               )}
 
-              {editingUser && editingUser.role !== ROLES.SUPER_ADMIN && (
+              {showFullUserSetup && (
                 <div className="rounded-xl border border-gray-200 p-4 space-y-3">
                   <p className="text-sm font-semibold text-gray-900">Site Integration</p>
+                  {!editingUser && (
+                    <p className="text-xs text-gray-600">
+                      If you fill Site URL or Property ID, integration is saved automatically when you click Create.
+                    </p>
+                  )}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
                       User Name / Email (optional for verification)
@@ -969,7 +1157,11 @@ export default function AdminSection() {
                       onChange={(e) =>
                         setSiteIntegrationForm((prev) => ({ ...prev, emailOrVerification: e.target.value }))
                       }
-                      placeholder={editingUser.email || "user@example.com or google-site-verification=..."}
+                      placeholder={
+                        editingUser?.email ||
+                        formData.email ||
+                        "user@example.com or google-site-verification=..."
+                      }
                       className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white text-gray-900"
                     />
                   </div>
@@ -980,9 +1172,11 @@ export default function AdminSection() {
                     <input
                       type="url"
                       value={siteIntegrationForm.siteUrl}
-                      onChange={(e) =>
-                        setSiteIntegrationForm((prev) => ({ ...prev, siteUrl: e.target.value }))
-                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSiteIntegrationForm((prev) => ({ ...prev, siteUrl: v }));
+                        setFormData((prev) => ({ ...prev, siteLink: v }));
+                      }}
                       placeholder="https://example.com"
                       className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent bg-white text-gray-900"
                     />
@@ -1004,7 +1198,7 @@ export default function AdminSection() {
                   <button
                     type="button"
                     onClick={handleSaveSiteIntegrationForUser}
-                    disabled={integratingSite}
+                    disabled={integratingSite || !editingUser}
                     className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-semibold disabled:opacity-60"
                   >
                     <FiSave className="w-4 h-4" />
@@ -1041,12 +1235,18 @@ export default function AdminSection() {
                 </div>
               )}
 
-              {editingUser && editingUser.role !== ROLES.SUPER_ADMIN && (
+              {showFullUserSetup && (
                 <div className="rounded-xl border border-gray-200 p-4 space-y-3">
                   <p className="text-sm font-semibold text-gray-900">SMM Baseline Setup (Followers)</p>
                   <p className="text-xs text-gray-600">
                     Optional quick-start: enter current followers so SMM cards show numbers immediately before GTM events start.
                   </p>
+                  {!editingUser && (
+                    <p className="text-xs text-gray-600">
+                      Baseline values are saved when you click Create (needs Site Link or integrated site URL). Use Edit
+                      after creation to fetch counts from handles.
+                    </p>
+                  )}
                   {loadingSmmBaseline && (
                     <p className="text-xs text-gray-500">Loading saved SMM baseline...</p>
                   )}
@@ -1099,7 +1299,7 @@ export default function AdminSection() {
                   <button
                     type="button"
                     onClick={handleFetchSmmFromHandles}
-                    disabled={fetchingSmmFromHandles}
+                    disabled={fetchingSmmFromHandles || !editingUser}
                     className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 text-gray-800 bg-white rounded-xl font-semibold disabled:opacity-60"
                   >
                     <FiRefreshCw className={`w-4 h-4 ${fetchingSmmFromHandles ? "animate-spin" : ""}`} />
@@ -1108,7 +1308,7 @@ export default function AdminSection() {
                   <button
                     type="button"
                     onClick={handleSaveSmmBaseline}
-                    disabled={savingSmmBaseline}
+                    disabled={savingSmmBaseline || !editingUser}
                     className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-semibold disabled:opacity-60"
                   >
                     <FiSave className="w-4 h-4" />
@@ -1128,21 +1328,22 @@ export default function AdminSection() {
                 </div>
               )}
 
-              {editingUser && (
-                <div>
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={formData.isActive}
-                      onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                      className="w-4 h-4 text-[#0EFF2A] border-gray-300 rounded focus:ring-[#0EFF2A]"
-                    />
-                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-800">
-                      Active
-                    </span>
-                  </label>
-                </div>
-              )}
+              <div>
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={formData.isActive === true}
+                    onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
+                    className="w-4 h-4 text-[#0EFF2A] border-gray-300 rounded focus:ring-[#0EFF2A]"
+                  />
+                  <span className="text-sm font-semibold text-gray-700 dark:text-gray-800">Active</span>
+                </label>
+                {!editingUser && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    When checked, the new account is created as active (can still be pending email verification).
+                  </p>
+                )}
+              </div>
 
               <div className="flex space-x-3 pt-4">
                 <button
@@ -1166,7 +1367,23 @@ export default function AdminSection() {
                       gtmContainerId: "",
                       facebookPageId: "",
                       instagramUserId: "",
+                      isActive: false,
                     });
+                    setSiteIntegrationForm({
+                      userId: "",
+                      siteUrl: "",
+                      propertyId: "",
+                      emailOrVerification: "",
+                    });
+                    setIntegrationPreview(null);
+                    setSmmBaselines(
+                      DEFAULT_SMM_BASELINES.map((row) => ({
+                        ...row,
+                        accountHandle: "",
+                        followers: "",
+                      }))
+                    );
+                    setSmmFetchStatusByPlatform({});
                   }}
                   className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-gray-100 dark:bg-gray-200 hover:bg-gray-200 dark:hover:bg-gray-300 text-gray-700 dark:text-gray-800 rounded-xl font-semibold transition-colors"
                 >

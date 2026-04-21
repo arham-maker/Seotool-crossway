@@ -30,6 +30,8 @@ model User {
   accessibleSites      UserAccessibleSite[]
   verificationLogs     VerificationLog[]
   smmDailyStats        SocialMediaDailyStat[]
+  approvalsReceived  Approval[]             @relation("ApprovalAssignee")
+  approvalsCreated   Approval[]             @relation("ApprovalCreatedBy")
 
   @@index([role])
   @@index([isActive], map: "users_is_active_idx")
@@ -40,6 +42,31 @@ model User {
   @@index([instagramUserId], map: "users_instagram_user_id_idx")
   @@index([status, emailVerified, createdAt], map: "users_status_verification_created_idx")
   @@map("users")
+}
+
+model Approval {
+  id                    String    @id @default(cuid()) @db.VarChar(191)
+  title                 String    @db.VarChar(255)
+  bodyText              String    @map("body_text") @db.Text
+  imagePath             String    @map("image_path") @db.VarChar(512)
+  assigneeId            String    @map("assignee_id") @db.VarChar(191)
+  createdById           String    @map("created_by_id") @db.VarChar(191)
+  status                String    @default("pending") @db.VarChar(32)
+  userEditedText        String?   @map("user_edited_text") @db.Text
+  respondedAt           DateTime? @map("responded_at")
+  lastAction            String?   @map("last_action") @db.VarChar(32)
+  awaitingAdminReview   Boolean   @default(false) @map("awaiting_admin_review")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  assignee  User @relation("ApprovalAssignee", fields: [assigneeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdBy User @relation("ApprovalCreatedBy", fields: [createdById], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([assigneeId], map: "approvals_assignee_id_idx")
+  @@index([createdById], map: "approvals_created_by_id_idx")
+  @@index([status], map: "approvals_status_idx")
+  @@index([awaitingAdminReview], map: "approvals_awaiting_admin_idx")
+  @@map("approvals")
 }
 
 model UserAccessibleSite {

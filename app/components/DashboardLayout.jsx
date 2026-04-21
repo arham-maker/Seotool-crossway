@@ -15,6 +15,7 @@ import {
   FiSettings,
   FiFileText,
   FiHelpCircle,
+  FiClipboard,
 } from "react-icons/fi";
 
 const mainMenuItems = [
@@ -25,6 +26,7 @@ const mainMenuItems = [
 
 const adminMenuItems = [
   { id: "user-management", label: "User Management", icon: FiSettings, role: "super_admin" },
+  { id: "admin-approvals", label: "Approvals", icon: FiClipboard, role: "super_admin" },
   { id: "reports", label: "Reports", icon: FiFileText },
 ];
 
@@ -47,8 +49,47 @@ export default function DashboardLayout({
   const [availableSites, setAvailableSites] = useState([]);
   const [superAdminPrimarySite, setSuperAdminPrimarySite] = useState("");
   const [failedSiteLogos, setFailedSiteLogos] = useState({});
+  const [approvalAdminUnread, setApprovalAdminUnread] = useState(0);
   const isSuperAdmin = session?.user?.role === "super_admin";
   const userSiteLink = session?.user?.siteLink || "";
+
+  useEffect(() => {
+    if (!isSuperAdmin) return undefined;
+    const loadUnread = async () => {
+      try {
+        const res = await fetch("/api/admin/approvals?countOnly=1");
+        const data = await res.json();
+        if (res.ok) setApprovalAdminUnread(Number(data.count) || 0);
+      } catch {
+        setApprovalAdminUnread(0);
+      }
+    };
+    loadUnread();
+    const interval = setInterval(loadUnread, 45000);
+    const onRefresh = () => loadUnread();
+    if (typeof window !== "undefined") {
+      window.addEventListener("approvals:admin-refresh", onRefresh);
+    }
+    return () => {
+      clearInterval(interval);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("approvals:admin-refresh", onRefresh);
+      }
+    };
+  }, [isSuperAdmin]);
+
+  useEffect(() => {
+    if (!isSuperAdmin || activeSection !== "admin-approvals") return;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/approvals?countOnly=1");
+        const data = await res.json();
+        if (res.ok) setApprovalAdminUnread(Number(data.count) || 0);
+      } catch {
+        setApprovalAdminUnread(0);
+      }
+    })();
+  }, [isSuperAdmin, activeSection]);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -398,6 +439,8 @@ export default function DashboardLayout({
                   .map((item) => {
                   const IconComponent = item.icon;
                   const isActive = activeSection === item.id;
+                  const showApprovalDot =
+                    item.id === "admin-approvals" && approvalAdminUnread > 0;
                   return (
                     <button
                       key={item.id}
@@ -416,10 +459,20 @@ export default function DashboardLayout({
                       }`}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      <IconComponent className={`w-4 h-4 ${isActive ? "text-[#1d9c35]" : ""}`} />
+                      <span className="relative inline-flex">
+                        <IconComponent className={`w-4 h-4 ${isActive ? "text-[#1d9c35]" : ""}`} />
+                        {showApprovalDot && (
+                          <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-white" />
+                        )}
+                      </span>
                       {!isCompactSidebar && (
-                        <span className={`font-medium text-sm ${isActive ? "text-gray-900" : ""} transition-colors duration-200`}>
+                        <span className={`font-medium text-sm flex items-center gap-2 ${isActive ? "text-gray-900" : ""} transition-colors duration-200`}>
                           {item.label}
+                          {showApprovalDot && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">
+                              {approvalAdminUnread > 9 ? "9+" : approvalAdminUnread}
+                            </span>
+                          )}
                         </span>
                       )}
                     </button>

@@ -43,6 +43,10 @@ yarn-error.log*
 # Credentials / secrets (never commit service account JSON)
 /credentials/
 
+# Uploaded approval images (keep folder via .gitkeep)
+/public/uploads/approvals/*
+!/public/uploads/approvals/.gitkeep
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

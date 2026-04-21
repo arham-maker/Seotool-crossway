@@ -1,6 +1,15 @@
 import { requireSuperAdmin } from "../../../../../lib/middleware/auth";
-import { getUserById, updateUser, deleteUser, assignSiteLink, assignAccessibleSites } from "../../../../../lib/auth";
+import {
+  getUserById,
+  updateUser,
+  deleteUser,
+  assignSiteLink,
+  assignAccessibleSites,
+  hashPassword,
+} from "../../../../../lib/auth";
 import { ROLES } from "../../../../../lib/rbac";
+import { validatePassword } from "../../../../../lib/validation";
+import prisma from "../../../../../lib/prisma";
 
 // GET /api/admin/users/[id] - Get user by ID (Super Admin only)
 export async function GET(req, { params }) {
@@ -73,6 +82,38 @@ export async function PATCH(req, { params }) {
     
     const { id } = await params;
     const body = await req.json();
+
+    const existing = await getUserById(id);
+    if (!existing) {
+      return new Response(JSON.stringify({ error: "User not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    let passwordUpdated = false;
+    if (body.password !== undefined) {
+      const rawPwd = typeof body.password === "string" ? body.password.trim() : "";
+      delete body.password;
+      if (rawPwd) {
+        const pwdCheck = validatePassword(rawPwd);
+        if (!pwdCheck.valid) {
+          return new Response(
+            JSON.stringify({ error: pwdCheck.errors.join("; ") || "Invalid password" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+        const hashed = await hashPassword(rawPwd);
+        await prisma.user.update({
+          where: { id },
+          data: { password: hashed },
+        });
+        passwordUpdated = true;
+      }
+    }
     
     // Don't allow changing to super_admin role through API
     if (body.role === ROLES.SUPER_ADMIN) {
@@ -87,7 +128,7 @@ export async function PATCH(req, { params }) {
     
     // Validate role if provided
     if (body.role) {
-      const validRoles = [ROLES.USER, ROLES.VIEWER];
+      const validRoles = [ROLES.USER, ROLES.VIEWER, ROLES.SMM];
       if (!validRoles.includes(body.role)) {
         return new Response(
           JSON.stringify({ error: `Invalid role. Must be one of: ${validRoles.join(", ")}` }),
@@ -100,26 +141,32 @@ export async function PATCH(req, { params }) {
     }
     
     // Handle site link assignment
+    let siteLinkUpdated = false;
     if (body.siteLink !== undefined) {
-      if (body.siteLink) {
-        await assignSiteLink(id, body.siteLink);
+      const trimmed = typeof body.siteLink === "string" ? body.siteLink.trim() : "";
+      if (trimmed) {
+        await assignSiteLink(id, trimmed);
+        siteLinkUpdated = true;
       }
       delete body.siteLink; // Remove from update body
     }
     
-    // Handle accessible sites for viewers
-    if (body.accessibleSites !== undefined && body.role === ROLES.VIEWER) {
-      await assignAccessibleSites(id, body.accessibleSites);
+    // Handle accessible sites for viewers / SMM (read-only multi-site roles)
+    if (body.accessibleSites !== undefined) {
+      const roleForSites = body.role || existing.role;
+      if (roleForSites === ROLES.VIEWER || roleForSites === ROLES.SMM) {
+        await assignAccessibleSites(id, body.accessibleSites);
+      }
       delete body.accessibleSites; // Remove from update body
     }
     
     const updated = await updateUser(id, body);
     
-    if (!updated) {
+    if (!updated && !passwordUpdated && !siteLinkUpdated) {
       return new Response(
-        JSON.stringify({ error: "User not found or no changes made" }),
+        JSON.stringify({ error: "No changes made" }),
         {
-          status: 404,
+          status: 400,
           headers: { "Content-Type": "application/json" },
         }
       );

@@ -12,6 +12,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
+    "prisma:push": "node scripts/prisma-with-local-env.mjs db push",
     "db:migrate:mongo-to-mysql": "node scripts/migrate-mongo-to-mysql.js"
   },
   "dependencies": {

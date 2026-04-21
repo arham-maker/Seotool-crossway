@@ -13,7 +13,9 @@ import {
   FiChevronDown,
   FiArrowRight,
   FiInfo,
+  FiClipboard,
 } from "react-icons/fi";
+import ApprovalsUserPanel from "./ApprovalsUserPanel";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
 
 const RANGE_OPTIONS = [
@@ -89,8 +91,39 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
     ctr: false,
     position: false,
   });
+  const [mainTab, setMainTab] = useState("overview");
+  const [approvalOpenCount, setApprovalOpenCount] = useState(0);
+  const [approvalCountNonce, setApprovalCountNonce] = useState(0);
+  const showApprovalsTab = !isSuperAdmin;
 
   const effectiveSite = isSuperAdmin ? (selectedSite || userSiteLink) : userSiteLink;
+
+  useEffect(() => {
+    if (!showApprovalsTab) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/approvals");
+        const data = await res.json();
+        if (!res.ok || cancelled) return;
+        const list = data.approvals || [];
+        const n = list.filter((a) => a.status === "pending" || a.status === "edited").length;
+        setApprovalOpenCount(n);
+      } catch {
+        if (!cancelled) setApprovalOpenCount(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showApprovalsTab, mainTab, approvalCountNonce]);
+
+  useEffect(() => {
+    const bump = () => setApprovalCountNonce((n) => n + 1);
+    if (typeof window === "undefined") return undefined;
+    window.addEventListener("approvals:user-updated", bump);
+    return () => window.removeEventListener("approvals:user-updated", bump);
+  }, []);
 
   const fetchData = useCallback(async () => {
     if (!effectiveSite) {
@@ -244,6 +277,44 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
       <h2 className="text-[28px] font-semibold text-gray-900 mb-3">{title}</h2>
       <div className="border-t border-gray-200 mb-4" />
 
+      {showApprovalsTab && (
+        <div className="flex gap-2 mb-5">
+          <button
+            type="button"
+            onClick={() => setMainTab("overview")}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border ${
+              mainTab === "overview"
+                ? "bg-[#dff7de] border-[#b6ddb1] text-gray-900"
+                : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            <FiGlobe className="w-4 h-4" />
+            Overview
+          </button>
+          <button
+            type="button"
+            onClick={() => setMainTab("approvals")}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border relative ${
+              mainTab === "approvals"
+                ? "bg-[#dff7de] border-[#b6ddb1] text-gray-900"
+                : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            <FiClipboard className="w-4 h-4" />
+            Approvals
+            {approvalOpenCount > 0 && (
+              <span className="ml-1 min-w-[1.25rem] h-5 px-1.5 rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center">
+                {approvalOpenCount > 9 ? "9+" : approvalOpenCount}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {showApprovalsTab && mainTab === "approvals" ? (
+        <ApprovalsUserPanel />
+      ) : (
+        <>
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <button
           onClick={fetchData}
@@ -463,6 +534,8 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
