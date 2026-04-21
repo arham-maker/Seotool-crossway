@@ -197,9 +197,6 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
                       {formatCardWhen(displayWhen)}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-full border border-green-200 bg-green-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-green-800">
-                    Approved
-                  </span>
                 </header>
                 <MediaPreview imagePath={a.imagePath} title={a.title} />
               </article>
