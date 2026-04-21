@@ -209,19 +209,25 @@ export default function AdminApprovalsSection() {
     }
     setSubmitting(true);
     try {
+      const wasApproveOnAssignment = form.approveOnAssignment;
       const fd = new FormData();
       fd.append("image", form.imageFile);
       fd.append("title", form.title.trim());
       fd.append("assigneeUserId", form.assigneeUserId);
+      fd.append("approveOnAssignment", wasApproveOnAssignment ? "1" : "0");
       const res = await fetch("/api/admin/approvals", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to create approval");
-      setSuccess("Approval created and assigned.");
-      setForm({ title: "", assigneeUserId: "", imageFile: null });
+      setSuccess(
+        wasApproveOnAssignment
+          ? "Approval created and recorded as approved (assignee does not need to review)."
+          : "Approval created and assigned."
+      );
+      setForm({ title: "", assigneeUserId: "", imageFile: null, approveOnAssignment: false });
       await load();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("approvals:admin-refresh"));
-        if (form.approveOnAssignment) {
+        if (wasApproveOnAssignment) {
           window.dispatchEvent(new CustomEvent("approvals:user-updated"));
         }
       }
@@ -298,8 +304,9 @@ export default function AdminApprovalsSection() {
             <span>
               <span className="block text-sm font-semibold text-gray-900">Approve on assignment</span>
               <span className="block text-xs text-gray-600 mt-0.5">
-                When checked, this user does not need to open Approvals — the item is stored as approved immediately.
-                When unchecked, behavior is unchanged (assignee must review).
+                When checked, the item is saved as approved immediately and is omitted from the assignee&apos;s
+                Approvals tab — they never need to approve it. When unchecked, the assignee must review and approve
+                (or edit / decline) as usual.
               </span>
             </span>
           </label>

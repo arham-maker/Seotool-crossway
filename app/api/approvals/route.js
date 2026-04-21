@@ -6,8 +6,8 @@ import { ROLES } from "../../../lib/rbac";
 
 export const runtime = "nodejs";
 
-/** GET — approvals assigned to the current user */
-export async function GET() {
+/** GET — approvals assigned to the current user. Query: smmDisplay=1 includes auto-approved-on-assignment rows (SMM cards only). */
+export async function GET(req) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
@@ -25,6 +25,8 @@ export async function GET() {
     }
 
     const assigneeId = session.user.id;
+    const forSmmDisplay = req.nextUrl?.searchParams?.get("smmDisplay") === "1";
+
     const rows = await prisma.approval.findMany({
       where: { assigneeId },
       orderBy: { createdAt: "desc" },
@@ -54,7 +56,24 @@ export async function GET() {
       // Column missing or DB mismatch — return all rows for this assignee
     }
 
-    const approvals = rows.filter((a) => !hiddenIds.has(a.id));
+    let approvals = rows.filter((a) => !hiddenIds.has(a.id));
+
+    if (!forSmmDisplay) {
+      let skippedIds = new Set();
+      try {
+        const skippedRows = await prisma.$queryRaw(
+          Prisma.sql`SELECT id FROM approvals WHERE assignee_id = ${assigneeId} AND skipped_assignee_review = 1`
+        );
+        skippedIds = new Set(
+          Array.isArray(skippedRows)
+            ? skippedRows.map((r) => String((r && r.id) || "")).filter(Boolean)
+            : []
+        );
+      } catch {
+        // Column missing — keep all visible rows
+      }
+      approvals = approvals.filter((a) => !skippedIds.has(a.id));
+    }
 
     return new Response(JSON.stringify({ approvals }), {
       status: 200,

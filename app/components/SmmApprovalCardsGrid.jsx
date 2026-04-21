@@ -112,7 +112,7 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
           }));
         setItems(filtered);
       } else {
-        const res = await fetch("/api/approvals");
+        const res = await fetch("/api/approvals?smmDisplay=1");
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to load");
         setItems(data.approvals || []);

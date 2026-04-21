@@ -82,7 +82,8 @@ export default function ApprovalsUserPanel() {
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">
           Review heading and image from your administrator. You can edit the <strong>text</strong> only (image stays
-          fixed), then approve, save your edit, or decline.
+          fixed), then approve, save your edit, or decline. Items your administrator marked as approved on assignment do
+          not appear here — no action needed from you.
         </p>
         <button
           type="button"
