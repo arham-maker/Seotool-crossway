@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import crypto from "crypto";
+import { Prisma } from "@prisma/client";
 import { requireSuperAdmin } from "../../../../lib/middleware/auth";
 import prisma from "../../../../lib/prisma";
 import { ROLES } from "../../../../lib/rbac";
@@ -60,7 +61,7 @@ export async function GET(req) {
   }
 }
 
-/** POST — multipart: image (file), title, assigneeUserId */
+/** POST — multipart: image (file), title, assigneeUserId, optional approveOnAssignment ("1" / "true" / "on") */
 export async function POST(req) {
   try {
     const session = await requireSuperAdmin();
@@ -69,6 +70,11 @@ export async function POST(req) {
     const image = form.get("image");
     const title = String(form.get("title") || "").trim();
     const assigneeUserId = String(form.get("assigneeUserId") || "").trim();
+    const approveOnAssignmentRaw = form.get("approveOnAssignment");
+    const approveOnAssignment =
+      approveOnAssignmentRaw === "1" ||
+      approveOnAssignmentRaw === "true" ||
+      approveOnAssignmentRaw === "on";
 
     if (!title || title.length > 255) {
       return new Response(JSON.stringify({ error: "Title is required (max 255 characters)." }), {
@@ -131,6 +137,7 @@ export async function POST(req) {
 
     const imagePath = `/uploads/approvals/${fileName}`;
 
+    const now = new Date();
     const approval = await prisma.approval.create({
       data: {
         title,
@@ -138,7 +145,9 @@ export async function POST(req) {
         imagePath,
         assigneeId: assigneeUserId,
         createdById: session.user.id,
-        status: "pending",
+        status: approveOnAssignment ? "approved" : "pending",
+        lastAction: approveOnAssignment ? "approve" : null,
+        respondedAt: approveOnAssignment ? now : null,
         awaitingAdminReview: false,
       },
       include: {
@@ -146,7 +155,19 @@ export async function POST(req) {
       },
     });
 
-    return new Response(JSON.stringify({ approval }), {
+    if (approveOnAssignment) {
+      try {
+        await prisma.$executeRaw(
+          Prisma.sql`UPDATE approvals SET skipped_assignee_review = 1 WHERE id = ${approval.id}`
+        );
+      } catch {
+        // DB column missing or client mismatch — row still created as approved
+      }
+    }
+
+    const approvalOut = { ...approval, skippedAssigneeReview: approveOnAssignment };
+
+    return new Response(JSON.stringify({ approval: approvalOut }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
     });

@@ -56,6 +56,10 @@ model Approval {
   respondedAt           DateTime? @map("responded_at")
   lastAction            String?   @map("last_action") @db.VarChar(32)
   awaitingAdminReview   Boolean   @default(false) @map("awaiting_admin_review")
+  /// When true, assignee dashboards and SMM approval cards hide this item (Super Admin still sees it here).
+  hiddenFromAssignee    Boolean   @default(false) @map("hidden_from_assignee")
+  /// Set when Super Admin chose "approve on assignment" — no assignee review step.
+  skippedAssigneeReview Boolean   @default(false) @map("skipped_assignee_review")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
@@ -66,6 +70,7 @@ model Approval {
   @@index([createdById], map: "approvals_created_by_id_idx")
   @@index([status], map: "approvals_status_idx")
   @@index([awaitingAdminReview], map: "approvals_awaiting_admin_idx")
+  @@index([hiddenFromAssignee], map: "approvals_hidden_from_assignee_idx")
   @@map("approvals")
 }
 

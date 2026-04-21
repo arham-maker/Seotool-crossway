@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FiCheck,
   FiImage,
@@ -9,6 +9,10 @@ import {
   FiAlertCircle,
   FiChevronDown,
   FiChevronUp,
+  FiMoreVertical,
+  FiTrash2,
+  FiEye,
+  FiEyeOff,
 } from "react-icons/fi";
 
 const ROLES = { SUPER_ADMIN: "super_admin" };
@@ -36,9 +40,15 @@ function userResponseSummary(a) {
   const when = formatDateTime(a.respondedAt);
   const action = String(a.lastAction || "").toLowerCase();
   if (action === "approve" || a.status === "approved") {
+    if (a.skippedAssigneeReview) {
+      return {
+        label: "Approved (on assignment)",
+        detail: `No assignee review was required. Recorded ${when}.`,
+      };
+    }
     return {
       label: "Approved",
-      detail: `User approved on ${when}.`,
+      detail: `User approved${a.userEditedText ? " (after submitting edited text)" : ""} on ${when}.`,
     };
   }
   if (action === "decline" || a.status === "declined") {
@@ -49,8 +59,8 @@ function userResponseSummary(a) {
   }
   if (action === "edit" || a.status === "edited") {
     return {
-      label: "Edited (legacy)",
-      detail: `User submitted an update on ${when} (older approvals only).`,
+      label: "Edited text",
+      detail: `User submitted revised text on ${when}. Compare below.`,
     };
   }
   return {
@@ -71,8 +81,12 @@ export default function AdminApprovalsSection() {
     title: "",
     assigneeUserId: "",
     imageFile: null,
+    /** If true, record as approved on create (assignee does not need to act). */
+    approveOnAssignment: false,
   });
   const [expandedApprovalId, setExpandedApprovalId] = useState(null);
+  const [actionsMenuId, setActionsMenuId] = useState(null);
+  const actionsMenuWrapRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -118,6 +132,55 @@ export default function AdminApprovalsSection() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (!actionsMenuId) return undefined;
+    const onDocMouseDown = (e) => {
+      const el = actionsMenuWrapRef.current;
+      if (el && !el.contains(e.target)) setActionsMenuId(null);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [actionsMenuId]);
+
+  const setHiddenFromAssignee = async (id, hidden) => {
+    setError("");
+    setActionsMenuId(null);
+    try {
+      const res = await fetch(`/api/admin/approvals/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hiddenFromAssignee: hidden }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update");
+      await load();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("approvals:admin-refresh"));
+      }
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const deleteApproval = async (id) => {
+    if (!window.confirm("Delete this approval permanently? This cannot be undone.")) return;
+    setError("");
+    setActionsMenuId(null);
+    try {
+      const res = await fetch(`/api/admin/approvals/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete");
+      if (expandedApprovalId === id) setExpandedApprovalId(null);
+      await load();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("approvals:admin-refresh"));
+        window.dispatchEvent(new CustomEvent("approvals:user-updated"));
+      }
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   const acknowledge = async (id) => {
     try {
       const res = await fetch(`/api/admin/approvals/${id}/acknowledge`, { method: "POST" });
@@ -158,6 +221,9 @@ export default function AdminApprovalsSection() {
       await load();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("approvals:admin-refresh"));
+        if (form.approveOnAssignment) {
+          window.dispatchEvent(new CustomEvent("approvals:user-updated"));
+        }
       }
       setTimeout(() => setSuccess(""), 4000);
     } catch (err) {
@@ -179,10 +245,6 @@ export default function AdminApprovalsSection() {
     <div className="rounded-xl border border-gray-200 bg-[#ffffff] overflow-hidden">
       <div className="px-4 sm:px-6 py-5 border-b border-gray-200">
         <h2 className="text-2xl font-bold text-gray-900">Approvals</h2>
-        <p className="text-sm text-gray-600 mt-1">
-          Create approval items with a heading and image, assign them to a user. They appear on the user&apos;s
-          dashboard under the Approvals tab. You are notified when they approve or decline.
-        </p>
       </div>
 
       <div className="p-4 sm:p-6 space-y-6">
@@ -226,6 +288,21 @@ export default function AdminApprovalsSection() {
             />
             <p className="text-xs text-gray-500 mt-1">JPEG, PNG, WebP, or GIF — max 5 MB.</p>
           </div>
+          <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-gray-200 bg-white px-4 py-3">
+            <input
+              type="checkbox"
+              checked={form.approveOnAssignment}
+              onChange={(e) => setForm((f) => ({ ...f, approveOnAssignment: e.target.checked }))}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-gray-900">Approve on assignment</span>
+              <span className="block text-xs text-gray-600 mt-0.5">
+                When checked, this user does not need to open Approvals — the item is stored as approved immediately.
+                When unchecked, behavior is unchanged (assignee must review).
+              </span>
+            </span>
+          </label>
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">Assign to user</label>
             <select
@@ -286,15 +363,34 @@ export default function AdminApprovalsSection() {
               {approvals.map((a) => {
                 const expanded = expandedApprovalId === a.id;
                 const summary = userResponseSummary(a);
+                const hasUserEdit =
+                  Boolean(a.userEditedText && String(a.userEditedText).trim()) ||
+                  a.status === "edited" ||
+                  a.lastAction === "edit";
+                const showTextCompare =
+                  Boolean(String(a.bodyText || "").trim()) ||
+                  Boolean(a.userEditedText && String(a.userEditedText).trim()) ||
+                  hasUserEdit;
                 return (
-                  <div key={a.id} className="border-b border-gray-100 last:border-b-0">
+                  <div
+                    key={a.id}
+                    className="border-b border-gray-100 last:border-b-0"
+                    ref={actionsMenuId === a.id ? actionsMenuWrapRef : undefined}
+                  >
                     <div className="px-4 py-3 grid sm:grid-cols-[1fr_100px_80px_1fr] gap-2 items-center text-sm">
                       <div>
                         <div className="flex items-center gap-2 text-gray-900 font-medium">
                           <FiUser className="w-4 h-4 text-gray-400 shrink-0" />
                           <span className="truncate">{a.assignee?.name || a.assignee?.email}</span>
                         </div>
-                        <div className="text-gray-600 truncate mt-0.5">{a.title}</div>
+                        <div className="text-gray-600 truncate mt-0.5 flex items-center gap-2 flex-wrap">
+                          <span className="truncate">{a.title}</span>
+                          {a.hiddenFromAssignee ? (
+                            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-gray-300 bg-gray-100 text-gray-600">
+                              Hidden
+                            </span>
+                          ) : null}
+                        </div>
                         <div className="text-xs text-gray-400 sm:hidden mt-1">
                           {a.status}
                           {a.awaitingAdminReview ? " · needs review" : ""}
@@ -340,6 +436,55 @@ export default function AdminApprovalsSection() {
                             Mark seen
                           </button>
                         ) : null}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded={actionsMenuId === a.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActionsMenuId((cur) => (cur === a.id ? null : a.id));
+                            }}
+                            className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                            title="More actions"
+                          >
+                            <FiMoreVertical className="w-4 h-4" />
+                          </button>
+                          {actionsMenuId === a.id ? (
+                            <div
+                              className="absolute right-0 top-full mt-1 z-30 min-w-[180px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                              role="menu"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50"
+                                onClick={() => setHiddenFromAssignee(a.id, !a.hiddenFromAssignee)}
+                              >
+                                {a.hiddenFromAssignee ? (
+                                  <>
+                                    <FiEye className="w-4 h-4 shrink-0" />
+                                    Show to user
+                                  </>
+                                ) : (
+                                  <>
+                                    <FiEyeOff className="w-4 h-4 shrink-0" />
+                                    Hide from user
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                                onClick={() => deleteApproval(a.id)}
+                              >
+                                <FiTrash2 className="w-4 h-4 shrink-0" />
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                     {expanded && (
@@ -371,11 +516,41 @@ export default function AdminApprovalsSection() {
                               />
                             </div>
                           </div>
-                          <div className="space-y-2 min-w-0">
-                            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">
-                              Heading
-                            </p>
-                            <p className="text-sm font-medium text-gray-900">{a.title}</p>
+                          <div className="space-y-4 min-w-0">
+                            <div>
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">
+                                Heading
+                              </p>
+                              <p className="text-sm font-medium text-gray-900">{a.title}</p>
+                            </div>
+                            {showTextCompare ? (
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-lg border border-gray-200 bg-white p-3 min-w-0">
+                                  <p className="text-[11px] font-semibold uppercase text-gray-500 mb-2">
+                                    Original text (you sent)
+                                  </p>
+                                  <p className="text-sm text-gray-800 whitespace-pre-wrap break-words">
+                                    {String(a.bodyText || "").trim() || "—"}
+                                  </p>
+                                </div>
+                                <div
+                                  className={`rounded-lg border p-3 min-w-0 ${
+                                    hasUserEdit
+                                      ? "border-amber-200 bg-amber-50/80"
+                                      : "border-gray-200 bg-white"
+                                  }`}
+                                >
+                                  <p className="text-[11px] font-semibold uppercase text-gray-600 mb-2">
+                                    User&apos;s text {hasUserEdit ? "(edited)" : "(no edit yet)"}
+                                  </p>
+                                  <p className="text-sm text-gray-900 whitespace-pre-wrap break-words">
+                                    {hasUserEdit && a.userEditedText
+                                      ? a.userEditedText
+                                      : "—"}
+                                  </p>
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       </div>

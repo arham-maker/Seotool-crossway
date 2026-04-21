@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 const OPEN_STATUSES = new Set(["pending", "edited"]);
 
-/** PATCH — assignee: approve | decline */
+/** PATCH — assignee: approve | decline | edit (text only; image unchanged) */
 export async function PATCH(req, { params }) {
   try {
     const session = await getServerSession(authOptions);
@@ -72,8 +72,32 @@ export async function PATCH(req, { params }) {
           awaitingAdminReview: true,
         },
       });
+    } else if (action === "edit") {
+      const editedText = String(body.editedText ?? "").trim();
+      if (!editedText) {
+        return new Response(JSON.stringify({ error: "editedText is required for edit action." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (editedText.length > 20000) {
+        return new Response(JSON.stringify({ error: "Edited text is too long (max 20000 characters)." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      await prisma.approval.update({
+        where: { id },
+        data: {
+          status: "edited",
+          userEditedText: editedText,
+          lastAction: "edit",
+          respondedAt: now,
+          awaitingAdminReview: true,
+        },
+      });
     } else {
-      return new Response(JSON.stringify({ error: "Invalid action. Use approve or decline." }), {
+      return new Response(JSON.stringify({ error: "Invalid action. Use approve, decline, or edit." }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
@@ -84,8 +108,10 @@ export async function PATCH(req, { params }) {
       select: {
         id: true,
         title: true,
+        bodyText: true,
         imagePath: true,
         status: true,
+        userEditedText: true,
         respondedAt: true,
         lastAction: true,
         createdAt: true,

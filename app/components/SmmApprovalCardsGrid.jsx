@@ -97,7 +97,10 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
           return;
         }
         const filtered = all
-          .filter((a) => a.assigneeId === ownerId || a.assignee?.id === ownerId)
+          .filter(
+            (a) =>
+              (a.assigneeId === ownerId || a.assignee?.id === ownerId) && !a.hiddenFromAssignee
+          )
           .map((a) => ({
             id: a.id,
             title: a.title,
@@ -128,10 +131,26 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
 
   const emptyHint = useMemo(() => {
     if (isSuperAdmin && !String(activeSite || "").trim()) {
-      return "Select a site in the header to see that client’s approval items.";
+      return "Select a site in the header to see that client’s approved items.";
     }
-    return "No approval items yet. When your administrator assigns an approval, it will appear here.";
+    return "No approval items assigned yet.";
   }, [isSuperAdmin, activeSite]);
+
+  const noApprovedYetHint = useMemo(() => {
+    if (isSuperAdmin && !String(activeSite || "").trim()) {
+      return emptyHint;
+    }
+    return "Only approved items are shown here. Approve an item under Dashboard → Approvals, then refresh.";
+  }, [isSuperAdmin, activeSite, emptyHint]);
+
+  const approvedItems = useMemo(
+    () =>
+      items.filter(
+        (a) =>
+          String(a.status || "").toLowerCase() === "approved" && !a.hiddenFromAssignee
+      ),
+    [items]
+  );
 
   if (loading) {
     return (
@@ -157,20 +176,30 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
       {!loading && items.length === 0 && !error ? (
         <p className="text-sm text-gray-500 py-8 text-center border border-dashed border-gray-200 rounded-xl">{emptyHint}</p>
       ) : null}
-      {items.length > 0 ? (
+      {!loading && items.length > 0 && approvedItems.length === 0 && !error ? (
+        <p className="text-sm text-gray-500 py-8 text-center border border-dashed border-gray-200 rounded-xl">
+          {noApprovedYetHint}
+        </p>
+      ) : null}
+      {approvedItems.length > 0 ? (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3 xl:grid-cols-4">
-          {items.map((a) => {
+          {approvedItems.map((a) => {
             const displayWhen = a.respondedAt || a.updatedAt || a.createdAt;
             return (
               <article
                 key={a.id}
                 className="flex flex-col rounded-2xl bg-[#F9F9F9] p-5 font-sans shadow-[0_4px_14px_rgba(0,0,0,0.08)] sm:p-6"
               >
-                <header className="mb-5">
-                  <h3 className="line-clamp-2 text-lg font-bold leading-snug text-black sm:text-xl">{a.title}</h3>
-                  <p className="mt-1 text-sm font-normal leading-normal text-[#666666]">
-                    {formatCardWhen(displayWhen)}
-                  </p>
+                <header className="mb-5 flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="line-clamp-2 text-lg font-bold leading-snug text-black sm:text-xl">{a.title}</h3>
+                    <p className="mt-1 text-sm font-normal leading-normal text-[#666666]">
+                      {formatCardWhen(displayWhen)}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-green-200 bg-green-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-green-800">
+                    Approved
+                  </span>
                 </header>
                 <MediaPreview imagePath={a.imagePath} title={a.title} />
               </article>

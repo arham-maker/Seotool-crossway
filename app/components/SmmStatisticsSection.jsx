@@ -334,7 +334,7 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
               <>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-sm font-semibold text-gray-900">Approvals</p>
-                  <span className="text-[11px] text-gray-500 hidden sm:inline">Assigned items and status</span>
+                  <span className="text-[11px] text-gray-500 hidden sm:inline">Approved items only</span>
                 </div>
                 <SmmApprovalCardsGrid isSuperAdmin={isSuperAdmin} activeSite={activeSite} />
               </>
