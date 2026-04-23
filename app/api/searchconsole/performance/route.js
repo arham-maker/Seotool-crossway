@@ -4,42 +4,27 @@ import { getSearchAnalyticsTimeSeries, getTopQueries, getTopPages, getTopCountri
 import { ROLES } from "../../../../lib/rbac";
 import { isValidUrl, normalizeSiteOrigin, validateAndNormalizeSiteUrl } from "../../../../lib/validation";
 import { classifyError, ERROR_TYPES } from "../../../../lib/errorHandling";
+import {
+  getDateRangeForPresetId,
+  isValidYMD,
+  inclusiveDayCountYMD,
+  densifyTimeSeries,
+  clampSearchConsoleQueryRange,
+} from "../../../../lib/searchConsoleDateRanges";
 
 // Ensure this route runs in the Node.js runtime
 export const runtime = "nodejs";
 
-function formatDate(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+const MAX_SPAN_DAYS = 500;
 
-function getDateRange(range) {
-  const endDate = new Date();
-  const startDate = new Date();
-
-  switch (range) {
-    case "24h":
-      startDate.setDate(startDate.getDate() - 1);
-      break;
-    case "7d":
-      startDate.setDate(startDate.getDate() - 7);
-      break;
-    case "28d":
-      startDate.setDate(startDate.getDate() - 28);
-      break;
-    case "3m":
-      startDate.setMonth(startDate.getMonth() - 3);
-      break;
-    default:
-      startDate.setDate(startDate.getDate() - 28);
+function resolveRange(range, startDateQ, endDateQ) {
+  if (isValidYMD(startDateQ) && isValidYMD(endDateQ) && startDateQ <= endDateQ) {
+    if (inclusiveDayCountYMD(startDateQ, endDateQ) > MAX_SPAN_DAYS) {
+      throw new Error(`Date range is too long (max ${MAX_SPAN_DAYS} days).`);
+    }
+    return { startDate: startDateQ, endDate: endDateQ, range: "custom" };
   }
-
-  return {
-    startDate: formatDate(startDate),
-    endDate: formatDate(endDate),
-  };
+  return { ...getDateRangeForPresetId(range || "28d"), range: range || "28d" };
 }
 
 /**
@@ -62,6 +47,10 @@ export async function GET(req) {
 
     const userRole = session.user.role || ROLES.USER;
     const range = req.nextUrl.searchParams.get("range") || "28d";
+    const startDateQ = req.nextUrl.searchParams.get("startDate");
+    const endDateQ = req.nextUrl.searchParams.get("endDate");
+    const compareStartQ = req.nextUrl.searchParams.get("compareStart");
+    const compareEndQ = req.nextUrl.searchParams.get("compareEnd");
     const page = parseInt(req.nextUrl.searchParams.get("page") || "1");
     const pageSize = parseInt(req.nextUrl.searchParams.get("pageSize") || "10");
 
@@ -107,7 +96,26 @@ export async function GET(req) {
         }
       );
     }
-    const { startDate, endDate } = getDateRange(range);
+    let { startDate, endDate, range: rangeResolved } = resolveRange(range, startDateQ, endDateQ);
+    const primaryClamped = clampSearchConsoleQueryRange(startDate, endDate);
+    startDate = primaryClamped.startDate;
+    endDate = primaryClamped.endDate;
+
+    const hasCompareRequest =
+      isValidYMD(compareStartQ) && isValidYMD(compareEndQ) && compareStartQ <= compareEndQ;
+    let compareStart = compareStartQ;
+    let compareEnd = compareEndQ;
+    if (hasCompareRequest) {
+      const compareClamped = clampSearchConsoleQueryRange(compareStartQ, compareEndQ);
+      compareStart = compareClamped.startDate;
+      compareEnd = compareClamped.endDate;
+    }
+    if (hasCompareRequest && inclusiveDayCountYMD(compareStart, compareEnd) > MAX_SPAN_DAYS) {
+      return new Response(
+        JSON.stringify({ error: `Compare date range is too long (max ${MAX_SPAN_DAYS} days).` }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     // Access control: Regular users can only query their own siteLink
     if (userRole === ROLES.USER) {
@@ -138,13 +146,32 @@ export async function GET(req) {
     }
 
     try {
-      // Fetch time-series data and top queries in parallel
-      const [timeSeriesData, topQueriesData, topPagesData, topCountriesData] = await Promise.all([
-        getSearchAnalyticsTimeSeries(normalizedUrl, startDate, endDate),
-        getTopQueries(normalizedUrl, startDate, endDate, 1000),
-        getTopPages(normalizedUrl, startDate, endDate, 1000),
-        getTopCountries(normalizedUrl, startDate, endDate, 50),
-      ]);
+      const comparePromise = hasCompareRequest
+        ? getSearchAnalyticsTimeSeries(normalizedUrl, compareStart, compareEnd)
+        : Promise.resolve(null);
+
+      const [timeSeriesData, topQueriesData, topPagesData, topCountriesData, timeSeriesCompareData] =
+        await Promise.all([
+          getSearchAnalyticsTimeSeries(normalizedUrl, startDate, endDate),
+          getTopQueries(normalizedUrl, startDate, endDate, 1000),
+          getTopPages(normalizedUrl, startDate, endDate, 1000),
+          getTopCountries(normalizedUrl, startDate, endDate, 50),
+          comparePromise,
+        ]);
+
+      const timeSeriesDens = densifyTimeSeries(
+        startDate,
+        endDate,
+        timeSeriesData.timeSeries
+      );
+      const compareDens =
+        hasCompareRequest && timeSeriesCompareData
+          ? densifyTimeSeries(
+              compareStart,
+              compareEnd,
+              timeSeriesCompareData.timeSeries
+            )
+          : null;
 
       // Paginate top queries
       const startIndex = (page - 1) * pageSize;
@@ -154,8 +181,10 @@ export async function GET(req) {
       return new Response(
         JSON.stringify({
           siteUrl: normalizedUrl,
-          timeSeries: timeSeriesData.timeSeries,
+          timeSeries: timeSeriesDens,
+          compareTimeSeries: hasCompareRequest ? compareDens : null,
           totals: timeSeriesData.totals,
+          compareTotals: hasCompareRequest && timeSeriesCompareData ? timeSeriesCompareData.totals : null,
           topQueries: {
             queries: paginatedQueries,
             total: topQueriesData.total,
@@ -174,8 +203,12 @@ export async function GET(req) {
           dateRange: {
             startDate,
             endDate,
-            range,
+            range: rangeResolved,
           },
+          compareDateRange:
+            hasCompareRequest
+              ? { startDate: compareStart, endDate: compareEnd }
+              : null,
           lastUpdated: new Date().toISOString(),
         }),
         {

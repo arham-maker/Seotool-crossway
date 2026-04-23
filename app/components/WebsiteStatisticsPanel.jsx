@@ -14,9 +14,14 @@ import {
   FiArrowRight,
   FiInfo,
   FiClipboard,
+  FiSliders,
 } from "react-icons/fi";
 import ApprovalsUserPanel from "./ApprovalsUserPanel";
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Legend } from "recharts";
+import { mergeCompareTimeSeries } from "../../lib/searchConsoleDateRanges";
+import WebsiteStatisticsDateRangeModal, {
+  formatDisplayRange,
+} from "./WebsiteStatisticsDateRangeModal";
 
 const RANGE_OPTIONS = [
   { id: "24h", label: "24 hours" },
@@ -24,6 +29,106 @@ const RANGE_OPTIONS = [
   { id: "28d", label: "28 days" },
   { id: "3m", label: "3 months" },
 ];
+
+const EXT_PRESET_BADGE = {
+  "6m": "6 mo",
+  "12m": "12 mo",
+  "16m": "16 mo",
+};
+
+function timeSelectionLabel(t) {
+  if (!t) return "Date range";
+  if (t.type === "preset") {
+    const o = RANGE_OPTIONS.find((r) => r.id === t.range);
+    if (o) return o.label;
+    if (EXT_PRESET_BADGE[t.range]) return `Last ${EXT_PRESET_BADGE[t.range]}`;
+  }
+  if (t.type === "custom" && t.startDate && t.endDate) {
+    return formatDisplayRange(t.startDate, t.endDate);
+  }
+  if (t.type === "compare" && t.startDate && t.endDate) {
+    return `Compare · ${formatDisplayRange(t.startDate, t.endDate)}`;
+  }
+  return "Date range";
+}
+
+function tableFooterLabel(t, payload) {
+  const dr = payload?.dateRange;
+  if (t?.type === "compare" && t.startDate && t.endDate) {
+    return `Primary: ${formatDisplayRange(t.startDate, t.endDate)}`;
+  }
+  if (dr?.startDate && dr?.endDate) {
+    if (dr.range && dr.range !== "custom" && !["24h", "7d", "28d", "3m"].includes(dr.range)) {
+      if (dr.range === "6m") return "Last 6 months";
+      if (dr.range === "12m") return "Last 12 months";
+      if (dr.range === "16m") return "Last 16 months";
+    }
+    return formatDisplayRange(dr.startDate, dr.endDate);
+  }
+  if (t?.type === "preset" && t.range) {
+    const o = RANGE_OPTIONS.find((r) => r.id === t.range);
+    if (o) return o.label;
+  }
+  return "Last 7 days";
+}
+
+/** Short primary-period caption for metric cards (Search Console style). */
+function getPrimaryPeriodCaption(t, dr) {
+  if (t?.type === "preset" && t.range) {
+    const o = RANGE_OPTIONS.find((r) => r.id === t.range);
+    if (o) {
+      if (o.id === "24h") return "Last 24 hours";
+      if (o.id === "7d") return "Last 7 days";
+      if (o.id === "28d") return "Last 28 days";
+      if (o.id === "3m") return "Last 3 months";
+    }
+    if (t.range === "6m") return "Last 6 months";
+    if (t.range === "12m") return "Last 12 months";
+    if (t.range === "16m") return "Last 16 months";
+  }
+  if (t?.type === "custom" && t.startDate && t.endDate) {
+    return formatDisplayRange(t.startDate, t.endDate);
+  }
+  if (t?.type === "compare") {
+    const pr = t.comparePreset;
+    if (pr && pr !== "custom") {
+      if (pr.startsWith("c24h_")) return "Last 24 hours";
+      if (pr.startsWith("c7d_")) return "Last 7 days";
+      if (pr.startsWith("c28d_")) return "Last 28 days";
+      if (pr.startsWith("c3m_")) return "Last 3 months";
+      if (pr.startsWith("c6m_")) return "Last 6 months";
+      if (pr.startsWith("c16m_")) return "Last 16 months";
+    }
+    if (t.startDate && t.endDate) return formatDisplayRange(t.startDate, t.endDate);
+  }
+  if (dr?.startDate && dr?.endDate) {
+    if (dr.range && dr.range !== "custom") {
+      const o = RANGE_OPTIONS.find((r) => r.id === dr.range);
+      if (o) {
+        if (o.id === "24h") return "Last 24 hours";
+        if (o.id === "7d") return "Last 7 days";
+        if (o.id === "28d") return "Last 28 days";
+        if (o.id === "3m") return "Last 3 months";
+      }
+      if (dr.range === "6m") return "Last 6 months";
+      if (dr.range === "12m") return "Last 12 months";
+      if (dr.range === "16m") return "Last 16 months";
+    }
+    return formatDisplayRange(dr.startDate, dr.endDate);
+  }
+  return "Selected range";
+}
+
+/** Second line under the compare value (e.g. “Same period last year”). */
+function getComparePeriodCaption(comparePreset) {
+  if (!comparePreset || comparePreset === "custom") {
+    return "Compare range";
+  }
+  if (comparePreset === "c24h_wow") return "Same day last week";
+  if (comparePreset.endsWith("_yoy")) return "Same period last year";
+  if (comparePreset.endsWith("_prev")) return "Previous period";
+  return "Compare range";
+}
 
 const COUNTRY_NAMES = {
   us: "United States",
@@ -80,7 +185,8 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
   const isSuperAdmin = session?.user?.role === "super_admin";
   const userSiteLink = session?.user?.siteLink || "";
 
-  const [range, setRange] = useState("3m");
+  const [timeSelection, setTimeSelection] = useState({ type: "preset", range: "3m" });
+  const [dateModalOpen, setDateModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [payload, setPayload] = useState(null);
@@ -136,8 +242,24 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
     setLoading(true);
     setError("");
     try {
-      const url = `/api/searchconsole/performance?range=${range}&page=1&pageSize=10${isSuperAdmin ? `&url=${encodeURIComponent(effectiveSite)}` : ""}`;
-      const res = await fetch(url);
+      const qs = new URLSearchParams({ page: "1", pageSize: "10" });
+      if (timeSelection.type === "preset") {
+        qs.set("range", timeSelection.range);
+      } else if (timeSelection.type === "custom") {
+        qs.set("startDate", timeSelection.startDate);
+        qs.set("endDate", timeSelection.endDate);
+      } else if (timeSelection.type === "compare") {
+        qs.set("startDate", timeSelection.startDate);
+        qs.set("endDate", timeSelection.endDate);
+        qs.set("compareStart", timeSelection.compareStart);
+        qs.set("compareEnd", timeSelection.compareEnd);
+      } else {
+        qs.set("range", "28d");
+      }
+      if (isSuperAdmin) {
+        qs.set("url", effectiveSite);
+      }
+      const res = await fetch(`/api/searchconsole/performance?${qs.toString()}`);
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.userMessage || data.error || "Failed to fetch statistics");
@@ -148,15 +270,32 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
     } finally {
       setLoading(false);
     }
-  }, [effectiveSite, isSuperAdmin, range]);
+  }, [effectiveSite, isSuperAdmin, timeSelection]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
   const chartData = useMemo(() => {
-    return (payload?.timeSeries || []).map((item) => ({
+    if (!payload?.timeSeries?.length) return [];
+    if (payload.compareTimeSeries?.length) {
+      const merged = mergeCompareTimeSeries(payload.timeSeries, payload.compareTimeSeries);
+      return merged.map((item) => ({
+        date: item.dateLabel,
+        fullDate: item.date,
+        clicks: item.clicks || 0,
+        impressions: item.impressions || 0,
+        ctr: (item.ctr || 0) * 100,
+        position: item.position || 0,
+        compareClicks: item.compareClicks || 0,
+        compareImpressions: item.compareImpressions || 0,
+        compareCtr: (item.compareCtr || 0) * 100,
+        comparePosition: item.comparePosition || 0,
+      }));
+    }
+    return (payload.timeSeries || []).map((item) => ({
       date: item.date.slice(5),
+      fullDate: item.date,
       clicks: item.clicks || 0,
       impressions: item.impressions || 0,
       ctr: (item.ctr || 0) * 100,
@@ -168,6 +307,68 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
     const values = (payload?.topCountries?.countries || []).map((c) => c.clicks || 0);
     return Math.max(1, ...values);
   }, [payload]);
+
+  const hasCompare = Boolean(payload?.compareTimeSeries?.length);
+  const footerText = useMemo(
+    () => tableFooterLabel(timeSelection, payload),
+    [timeSelection, payload]
+  );
+  const primaryPeriodCaption = useMemo(
+    () => getPrimaryPeriodCaption(timeSelection, payload?.dateRange),
+    [timeSelection, payload?.dateRange]
+  );
+  const comparePeriodCaption = useMemo(
+    () =>
+      timeSelection.type === "compare"
+        ? getComparePeriodCaption(timeSelection.comparePreset)
+        : "",
+    [timeSelection]
+  );
+
+  const onDateRangeApply = useCallback((p) => {
+    if (p.kind === "filter") {
+      if (p.filterPreset === "custom") {
+        setTimeSelection({ type: "custom", startDate: p.startDate, endDate: p.endDate });
+      } else {
+        setTimeSelection({ type: "preset", range: p.filterPreset });
+      }
+    } else {
+      setTimeSelection({
+        type: "compare",
+        startDate: p.startDate,
+        endDate: p.endDate,
+        compareStart: p.compareStart,
+        compareEnd: p.compareEnd,
+        comparePreset: p.compareLabel || "custom",
+      });
+    }
+  }, []);
+
+  const dateModalInitial = useMemo(() => {
+    if (timeSelection.type === "custom") {
+      return {
+        filterPreset: "custom",
+        customStart: timeSelection.startDate,
+        customEnd: timeSelection.endDate,
+      };
+    }
+    if (timeSelection.type === "compare") {
+      return {
+        filterPreset: "6m",
+        comparePreset: timeSelection.comparePreset === "custom" || !timeSelection.comparePreset
+          ? "custom"
+          : timeSelection.comparePreset,
+        pStart: timeSelection.startDate,
+        pEnd: timeSelection.endDate,
+        cStart: timeSelection.compareStart,
+        cEnd: timeSelection.compareEnd,
+      };
+    }
+    return {
+      filterPreset: ["6m", "12m", "16m"].includes(timeSelection.range) ? timeSelection.range : "6m",
+      comparePreset: "c3m_prev",
+    };
+  }, [timeSelection]);
 
   const toggleMetric = (key) => {
     setActiveMetrics((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -324,22 +525,45 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
         >
           <FiRefreshCw className={`${loading ? "animate-spin" : ""} w-3.5 h-3.5`} />
         </button>
-        {RANGE_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            onClick={() => setRange(option.id)}
-            className={`px-3 py-1.5 text-xs border rounded inline-flex items-center gap-1 ${
-              range === option.id ? "bg-[#d7efd4] border-[#b6ddb1] text-gray-900" : "bg-white border-gray-300 text-gray-600"
-            }`}
-          >
-            {range === option.id && <FiCheckSquare className="w-3 h-3 text-[#2fb54a]" />}
-            {option.label}
-          </button>
-        ))}
-        <button className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-gray-300 rounded bg-white text-gray-600">
-          more
-          <FiChevronDown className="w-3 h-3" />
+        {RANGE_OPTIONS.map((option) => {
+          const active =
+            timeSelection.type === "preset" && timeSelection.range === option.id;
+          return (
+            <button
+              key={option.id}
+              onClick={() =>
+                setTimeSelection({ type: "preset", range: option.id })
+              }
+              className={`px-3 py-1.5 text-xs border rounded inline-flex items-center gap-1 ${
+                active
+                  ? "bg-[#d7efd4] border-[#b6ddb1] text-gray-900"
+                  : "bg-white border-gray-300 text-gray-600"
+              }`}
+            >
+              {active && <FiCheckSquare className="w-3 h-3 text-[#2fb54a]" />}
+              {option.label}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setDateModalOpen(true)}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-300 rounded bg-white text-[#000] hover:bg-gray-50"
+          title="Date range and comparison"
+        >
+          <FiSliders className="w-3.5 h-3.5 shrink-0 text-[#000]" />
+          <span className="max-w-[10rem] sm:max-w-[16rem] truncate text-left text-[#000]">
+            {timeSelectionLabel(timeSelection)}
+          </span>
+          <FiChevronDown className="w-3 h-3 shrink-0 text-[#000]" />
         </button>
+        <WebsiteStatisticsDateRangeModal
+          open={dateModalOpen}
+          onClose={() => setDateModalOpen(false)}
+          onApply={onDateRangeApply}
+          defaultTab={timeSelection.type === "compare" ? "compare" : "filter"}
+          initial={dateModalInitial}
+        />
       </div>
 
       {error && (
@@ -348,35 +572,55 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 border border-gray-200 rounded overflow-hidden bg-white mb-4">
         <MetricCard
-          label="Total Clicks"
+          metric="clicks"
+          label="Total clicks"
           value={formatNum(payload?.totals?.clicks)}
+          hasCompare={hasCompare}
+          primaryValue={formatNum(payload?.totals?.clicks)}
+          compareValue={formatNum(payload?.compareTotals?.clicks)}
+          primaryPeriodCaption={primaryPeriodCaption}
+          comparePeriodCaption={comparePeriodCaption}
           checked={activeMetrics.clicks}
-          color="text-[#2fb54a]"
-          bg="bg-[#dff7de]"
+          color="text-sky-600"
           onToggle={() => toggleMetric("clicks")}
         />
         <MetricCard
+          metric="impressions"
           label="Total Impressions"
           value={formatCompact(payload?.totals?.impressions)}
+          hasCompare={hasCompare}
+          primaryValue={formatCompact(payload?.totals?.impressions)}
+          compareValue={formatCompact(payload?.compareTotals?.impressions)}
+          primaryPeriodCaption={primaryPeriodCaption}
+          comparePeriodCaption={comparePeriodCaption}
           checked={activeMetrics.impressions}
-          color="text-[#8d85c5]"
-          bg="bg-[#e7e5f7]"
+          color="text-violet-600"
           onToggle={() => toggleMetric("impressions")}
         />
         <MetricCard
+          metric="ctr"
           label="Average CTR"
           value={formatPct(payload?.totals?.averageCtr)}
+          hasCompare={hasCompare}
+          primaryValue={formatPct(payload?.totals?.averageCtr)}
+          compareValue={formatPct(payload?.compareTotals?.averageCtr)}
+          primaryPeriodCaption={primaryPeriodCaption}
+          comparePeriodCaption={comparePeriodCaption}
           checked={activeMetrics.ctr}
-          color="text-gray-7000"
-          bg="bg-white"
+          color="text-amber-700"
           onToggle={() => toggleMetric("ctr")}
         />
         <MetricCard
+          metric="position"
           label="Average Position"
           value={formatPos(payload?.totals?.averagePosition)}
+          hasCompare={hasCompare}
+          primaryValue={formatPos(payload?.totals?.averagePosition)}
+          compareValue={formatPos(payload?.compareTotals?.averagePosition)}
+          primaryPeriodCaption={primaryPeriodCaption}
+          comparePeriodCaption={comparePeriodCaption}
           checked={activeMetrics.position}
-          color="text-gray-700"
-          bg="bg-white"
+          color="text-slate-600"
           onToggle={() => toggleMetric("position")}
         />
       </div>
@@ -390,11 +634,167 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#777" }} />
               <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "#777" }} />
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: "#777" }} />
-              <Tooltip />
-              {activeMetrics.clicks && <Line yAxisId="left" type="monotone" dataKey="clicks" stroke="#34a853" strokeWidth={2} dot={false} />}
-              {activeMetrics.impressions && <Line yAxisId="right" type="monotone" dataKey="impressions" stroke="#7c7abc" strokeWidth={1.8} dot={false} />}
-              {activeMetrics.ctr && <Line yAxisId="left" type="monotone" dataKey="ctr" stroke="#f59e0b" strokeWidth={2} dot={false} />}
-              {activeMetrics.position && <Line yAxisId="left" type="monotone" dataKey="position" stroke="#6b7280" strokeWidth={2} dot={false} />}
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const row = payload[0]?.payload;
+                  if (!row) return null;
+                  const hasAny =
+                    activeMetrics.clicks ||
+                    activeMetrics.impressions ||
+                    activeMetrics.ctr ||
+                    activeMetrics.position;
+                  return (
+                    <div className="bg-white/95 border border-gray-200 rounded-md shadow-sm px-2.5 py-1.5 text-xs">
+                      <p className="text-gray-500 font-medium mb-0.5">{row.fullDate || label}</p>
+                      {hasAny && (
+                        <>
+                          {activeMetrics.clicks && (
+                            <p className="text-gray-800">
+                              Clicks: {formatNum(row.clicks)}
+                              {hasCompare && (
+                                <span className="text-gray-500"> / compare {formatNum(row.compareClicks)}</span>
+                              )}
+                            </p>
+                          )}
+                          {activeMetrics.impressions && (
+                            <p className="text-gray-800">
+                              Impr.: {formatNum(row.impressions)}
+                              {hasCompare && (
+                                <span className="text-gray-500"> / {formatNum(row.compareImpressions)}</span>
+                              )}
+                            </p>
+                          )}
+                          {activeMetrics.ctr && (
+                            <p className="text-gray-800">
+                              CTR: {Number(row.ctr ?? 0).toFixed(1)}%
+                              {hasCompare && (
+                                <span className="text-gray-500">
+                                  {" "}
+                                  / {Number(row.compareCtr ?? 0).toFixed(1)}%
+                                </span>
+                              )}
+                            </p>
+                          )}
+                          {activeMetrics.position && (
+                            <p className="text-gray-800">
+                              Position: {Number(row.position ?? 0).toFixed(1)}
+                              {hasCompare && (
+                                <span className="text-gray-500">
+                                  {" "}
+                                  / {Number(row.comparePosition ?? 0).toFixed(1)}
+                                </span>
+                              )}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                }}
+              />
+              {hasCompare && (
+                <Legend
+                  wrapperStyle={{ fontSize: 12, paddingTop: 4 }}
+                  formatter={(value) => <span className="text-gray-600">{value}</span>}
+                />
+              )}
+              {activeMetrics.clicks && (
+                <Line
+                  yAxisId="left"
+                  name={hasCompare ? "Clicks" : undefined}
+                  type="monotone"
+                  dataKey="clicks"
+                  stroke="#34a853"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
+              {activeMetrics.clicks && hasCompare && (
+                <Line
+                  yAxisId="left"
+                  name="Clicks (compare)"
+                  type="monotone"
+                  dataKey="compareClicks"
+                  stroke="#34a853"
+                  strokeWidth={2}
+                  strokeOpacity={0.45}
+                  strokeDasharray="6 4"
+                  dot={false}
+                />
+              )}
+              {activeMetrics.impressions && (
+                <Line
+                  yAxisId="right"
+                  name={hasCompare ? "Impressions" : undefined}
+                  type="monotone"
+                  dataKey="impressions"
+                  stroke="#7c7abc"
+                  strokeWidth={1.8}
+                  dot={false}
+                />
+              )}
+              {activeMetrics.impressions && hasCompare && (
+                <Line
+                  yAxisId="right"
+                  name="Impr. (compare)"
+                  type="monotone"
+                  dataKey="compareImpressions"
+                  stroke="#7c7abc"
+                  strokeWidth={1.8}
+                  strokeOpacity={0.45}
+                  strokeDasharray="6 4"
+                  dot={false}
+                />
+              )}
+              {activeMetrics.ctr && (
+                <Line
+                  yAxisId="left"
+                  name={hasCompare ? "CTR" : undefined}
+                  type="monotone"
+                  dataKey="ctr"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
+              {activeMetrics.ctr && hasCompare && (
+                <Line
+                  yAxisId="left"
+                  name="CTR (compare)"
+                  type="monotone"
+                  dataKey="compareCtr"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  strokeOpacity={0.45}
+                  strokeDasharray="6 4"
+                  dot={false}
+                />
+              )}
+              {activeMetrics.position && (
+                <Line
+                  yAxisId="left"
+                  name={hasCompare ? "Position" : undefined}
+                  type="monotone"
+                  dataKey="position"
+                  stroke="#6b7280"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
+              {activeMetrics.position && hasCompare && (
+                <Line
+                  yAxisId="left"
+                  name="Pos. (compare)"
+                  type="monotone"
+                  dataKey="comparePosition"
+                  stroke="#6b7280"
+                  strokeWidth={2}
+                  strokeOpacity={0.45}
+                  strokeDasharray="6 4"
+                  dot={false}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -424,7 +824,7 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
             ))}
           </div>
           <div className="flex items-center justify-between pt-3 text-[11px]">
-            <span className="text-gray-500">Last 7 days</span>
+            <span className="text-gray-500">{footerText}</span>
             <button
               type="button"
               onClick={() => setActiveDetailView("pages")}
@@ -481,7 +881,7 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
             </div>
           </div>
           <div className="flex items-center justify-between pt-3 text-[11px]">
-            <span className="text-gray-500">Last 7 days</span>
+            <span className="text-gray-500">{footerText}</span>
             <button
               type="button"
               onClick={() => setActiveDetailView("countries")}
@@ -522,7 +922,7 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
             ))}
           </div>
           <div className="flex items-center justify-between pt-3 text-[11px]">
-            <span className="text-gray-500">Last 7 days</span>
+            <span className="text-gray-500">{footerText}</span>
             <button
               type="button"
               onClick={() => setActiveDetailView("keywords")}
@@ -540,17 +940,113 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
   );
 }
 
-function MetricCard({ label, value, checked, color, bg, onToggle }) {
+const METRIC_LINE = {
+  clicks: "#34a853",
+  impressions: "#7c7abc",
+  ctr: "#f59e0b",
+  position: "#64748b",
+};
+
+const METRIC_ACTIVE_BG = {
+  clicks: "bg-sky-50/90",
+  impressions: "bg-violet-50/90",
+  ctr: "bg-amber-50/90",
+  position: "bg-slate-50/90",
+};
+
+function LineSwatch({ solid, color }) {
+  if (solid) {
+    return (
+      <span className="inline-block w-7 mt-0.5" aria-hidden>
+        <span className="block h-0.5 w-full rounded-full" style={{ backgroundColor: color }} />
+      </span>
+    );
+  }
   return (
-    <button onClick={onToggle} className={`text-left px-4 py-3 border-r border-gray-200 ${bg} min-h-[108px]`}>
-      <div className="flex items-center gap-2 mb-1 text-xs">
+    <span className="inline-block w-7 mt-0.5" aria-hidden>
+      <svg width="28" height="4" viewBox="0 0 28 4" className="block">
+        <line
+          x1="0"
+          y1="2"
+          x2="28"
+          y2="2"
+          stroke={color}
+          strokeWidth="2"
+          strokeDasharray="4 3"
+          strokeLinecap="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
+function MetricCard({
+  metric,
+  label,
+  value,
+  hasCompare,
+  primaryValue,
+  compareValue,
+  primaryPeriodCaption,
+  comparePeriodCaption,
+  checked,
+  color,
+  onToggle,
+}) {
+  const line = METRIC_LINE[metric] || "#64748b";
+  const activeBg = METRIC_ACTIVE_BG[metric] || "bg-white";
+  const surface = checked ? activeBg : "bg-white";
+
+  if (hasCompare) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`relative text-left pl-3 pr-3 pt-2.5 pb-9 min-h-[168px] border-r border-gray-200 last:border-r-0 ${surface} w-full transition-colors hover:brightness-[0.99]`}
+      >
+        <div className="flex items-center gap-2 text-xs pr-5">
+          {checked ? <FiCheckSquare className={color} /> : <FiSquare className="text-gray-400" />}
+          <span className={`${checked ? "text-gray-900" : "text-gray-600"} font-medium`}>{label}</span>
+        </div>
+        <div className="mt-2 pr-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[32px] leading-[1.1] font-medium text-gray-900 tabular-nums">{primaryValue}</p>
+              <p className="text-xs text-gray-600 mt-0.5 leading-tight">{primaryPeriodCaption || "—"}</p>
+            </div>
+            <LineSwatch solid color={line} />
+          </div>
+        </div>
+        <div className="mt-2.5 pt-2.5 border-t border-gray-200/80">
+          <div className="flex items-start justify-between gap-2 pr-1">
+            <div className="min-w-0">
+              <p className="text-2xl font-medium text-gray-800 tabular-nums">{compareValue}</p>
+              <p className="text-xs text-gray-600 mt-0.5 leading-tight">{comparePeriodCaption || "—"}</p>
+            </div>
+            <LineSwatch solid={false} color={line} />
+          </div>
+        </div>
+        <FiInfo className="w-3.5 h-3.5 text-gray-400 absolute bottom-2.5 right-2.5" title="" />
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`relative text-left pl-3 pr-3 py-3 min-h-[108px] border-r border-gray-200 last:border-r-0 ${
+        checked ? activeBg : "bg-white"
+      } w-full transition-colors hover:brightness-[0.99]`}
+    >
+      <div className="flex items-center gap-2 text-xs pr-5">
         {checked ? <FiCheckSquare className={color} /> : <FiSquare className="text-gray-400" />}
-        <span className={`${checked ? color : "text-gray-600"} font-medium`}>{label}</span>
+        <span className={`${checked ? "text-gray-900" : "text-gray-600"} font-medium`}>{label}</span>
       </div>
-      <div className="flex items-end justify-between mt-1">
-        <p className="text-[34px] leading-none font-medium text-gray-900">{value}</p>
-        <FiInfo className="w-3.5 h-3.5 text-gray-500" />
+      <div className="flex items-end justify-between mt-1 gap-2 pr-8">
+        <p className="text-[34px] leading-none font-medium text-gray-900 tabular-nums">{value}</p>
       </div>
+      <FiInfo className="w-3.5 h-3.5 text-gray-400 absolute bottom-2.5 right-2.5" />
     </button>
   );
 }
