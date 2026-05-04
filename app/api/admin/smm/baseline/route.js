@@ -16,7 +16,9 @@ function getUtcDayRange(date = new Date()) {
 }
 
 function normalizePlatform(value) {
-  return String(value || "").trim().toLowerCase();
+  const p = String(value || "").trim().toLowerCase();
+  if (p === "linkedin") return "";
+  return p === "x" ? "tiktok" : p;
 }
 
 export async function GET(req) {
@@ -51,18 +53,26 @@ export async function GET(req) {
       );
     }
 
-    const rows = await prisma.socialMediaDailyStat.findMany({
+    const rawRows = await prisma.socialMediaDailyStat.findMany({
       where: {
         userId,
         siteLink: normalizedSite,
       },
       orderBy: [{ statDate: "desc" }, { updatedAt: "desc" }],
     });
+    const rows = rawRows.filter((r) => String(r.platform || "").toLowerCase() !== "linkedin");
 
     const latestByPlatform = new Map();
     for (const row of rows) {
-      if (!latestByPlatform.has(row.platform)) {
-        latestByPlatform.set(row.platform, row);
+      const key = row.platform === "x" ? "tiktok" : row.platform;
+      const existing = latestByPlatform.get(key);
+      if (
+        !existing ||
+        new Date(row.statDate) > new Date(existing.statDate) ||
+        (new Date(row.statDate).getTime() === new Date(existing.statDate).getTime() &&
+          Number(row.followers || 0) >= Number(existing.followers || 0))
+      ) {
+        latestByPlatform.set(key, { ...row, platform: key });
       }
     }
 

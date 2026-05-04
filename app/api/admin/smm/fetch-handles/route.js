@@ -3,7 +3,9 @@ import { getUserById } from "../../../../../lib/auth";
 import { normalizeSiteOrigin } from "../../../../../lib/validation";
 
 function normalizePlatform(value) {
-  return String(value || "").trim().toLowerCase();
+  const p = String(value || "").trim().toLowerCase();
+  if (p === "linkedin") return "";
+  return p === "x" ? "tiktok" : p;
 }
 
 /** Meta Graph errors often mean expired token — surface a fix hint for admins. */
@@ -114,7 +116,20 @@ function resolvePlatformInput(platform, rawInput) {
     };
   }
 
-  if (platform === "x") {
+  if (platform === "tiktok") {
+    if (isUrl && host.includes("tiktok.com")) {
+      const fromAt = parts.find((p) => p.startsWith("@"));
+      const handle = (fromAt || parts[0] || "").replace(/^@/, "").trim();
+      if (handle) {
+        return {
+          identifier: handle,
+          profileUrl: raw,
+          normalizedHandle: handle,
+          xUserId: null,
+          tiktokUrlOnly: true,
+        };
+      }
+    }
     if (isUrl && (host.includes("x.com") || host.includes("twitter.com"))) {
       const userIdFromQuery = (parsed.searchParams.get("user_id") || "").trim();
       const userIdFromPath =
@@ -372,21 +387,21 @@ async function fetchXUserByPath(path, token) {
         return {
           ok: false,
           fatal: true,
-          reason: `X API unauthorized (401): ${msg}. Use the OAuth 2.0 Bearer Token from X Developer Portal → your app → Keys and Tokens (not Consumer Key/Secret). Paste only the token, no "Bearer " prefix. Regenerate the token if it was exposed. Save .env.local and restart npm run dev.`,
+          reason: `Twitter API unauthorized (401): ${msg}. Use the OAuth 2.0 Bearer Token from the Twitter developer portal → your app → Keys and Tokens (not Consumer Key/Secret). Paste only the token, no "Bearer " prefix. Regenerate the token if it was exposed. Save .env.local and restart npm run dev.`,
         };
       }
       if (res.status === 403) {
         return {
           ok: false,
           fatal: true,
-          reason: `X API forbidden (403): ${msg}. Ensure your X app has users.read (and appropriate access tier) for user lookup.`,
+          reason: `Twitter API forbidden (403): ${msg}. Ensure your app has users.read (and appropriate access tier) for user lookup.`,
         };
       }
       if (res.status === 429) {
         return {
           ok: false,
           fatal: true,
-          reason: `X API rate limited (429): ${msg}. Try again in a few minutes.`,
+          reason: `Twitter API rate limited (429): ${msg}. Try again in a few minutes.`,
         };
       }
       if (res.status === 404) {
@@ -398,18 +413,25 @@ async function fetchXUserByPath(path, token) {
       lastNotFound = err?.message || String(err);
     }
   }
-  return { ok: false, reason: lastNotFound || "X API request failed." };
+  return { ok: false, reason: lastNotFound || "Twitter API request failed." };
 }
 
 async function fetchXFollowers(input) {
-  const { identifier, profileUrl, normalizedHandle, xUserId } = input;
+  const { identifier, profileUrl, normalizedHandle, xUserId, tiktokUrlOnly } = input;
+  if (tiktokUrlOnly) {
+    return {
+      ok: false,
+      reason:
+        "TikTok.com follower counts cannot be fetched automatically yet. Enter followers manually, use GTM ingestion, or paste a Twitter profile URL or @handle in this TikTok row if you track that audience here.",
+    };
+  }
   const token = normalizeXBearerToken(process.env.X_BEARER_TOKEN || "");
 
   if (!token) {
     return {
       ok: false,
       reason:
-        "Missing X_BEARER_TOKEN. Add it to .env.local (not only .env), then restart npm run dev.",
+        "Missing X_BEARER_TOKEN (Twitter bearer token). Add it to .env.local (not only .env), then restart npm run dev.",
     };
   }
 
@@ -427,7 +449,7 @@ async function fetchXFollowers(input) {
   if (!paths.length) {
     return {
       ok: false,
-      reason: "Enter an X @handle, profile URL, or numeric user ID.",
+      reason: "Enter a @handle, Twitter profile URL, or numeric user ID.",
     };
   }
 
@@ -439,12 +461,12 @@ async function fetchXFollowers(input) {
       const user = result.data;
       const count = Number(user?.public_metrics?.followers_count ?? 0);
       const handle =
-        user?.username || normalizedHandle || idStr.replace(/^@/, "") || "x";
+        user?.username || normalizedHandle || idStr.replace(/^@/, "") || "tiktok";
       return {
         ok: true,
         data: {
-          platform: "x",
-          accountName: user?.name || "X",
+          platform: "tiktok",
+          accountName: user?.name || "TikTok",
           accountHandle: `@${handle}`,
           followers: count,
         },
@@ -475,12 +497,12 @@ async function fetchXFollowers(input) {
         ? Number(jsonMetric[1] || 0)
         : parseAbbrevNumber(textMetric?.[1] || 0);
       if (parsed > 0) {
-        const h = normalizedHandle || idStr.replace(/^@/, "") || "x";
+        const h = normalizedHandle || idStr.replace(/^@/, "") || "tiktok";
         return {
           ok: true,
           data: {
-            platform: "x",
-            accountName: "X",
+            platform: "tiktok",
+            accountName: "TikTok",
             accountHandle: `@${h}`,
             followers: parsed,
           },
@@ -491,13 +513,13 @@ async function fetchXFollowers(input) {
     htmlErr = err?.message || String(err);
   }
 
-  const parts = [apiFailureReason && `X API: ${apiFailureReason}`];
+  const parts = [apiFailureReason && `Twitter API: ${apiFailureReason}`];
   if (htmlErr) parts.push(`Page fallback: ${htmlErr}`);
   return {
     ok: false,
     reason:
       parts.filter(Boolean).join(" ") ||
-      "Unable to resolve X followers. Verify the handle exists and your X Developer app has access to user lookup.",
+      "Unable to resolve followers for this TikTok row. Verify the handle exists and your Twitter developer app has access to user lookup.",
   };
 }
 
@@ -544,6 +566,14 @@ export async function POST(req) {
 
     for (const row of rows) {
       const platform = normalizePlatform(row.platform);
+      if (!platform) {
+        skipped.push({
+          platform: String(row.platform || "").trim() || "unknown",
+          accountHandle: row.accountHandle,
+          reason: "This platform is not supported for auto-fetch.",
+        });
+        continue;
+      }
       const input = resolvePlatformInput(platform, row.accountHandle);
       if (!input.identifier) continue;
 
@@ -688,7 +718,7 @@ export async function POST(req) {
             reason: error.message || "Failed to fetch Instagram followers.",
           });
         }
-      } else if (platform === "x") {
+      } else if (platform === "tiktok") {
         try {
           const result = await fetchXFollowers(input);
           if (result.ok) {
@@ -697,14 +727,14 @@ export async function POST(req) {
             skipped.push({
               platform,
               accountHandle: row.accountHandle,
-              reason: result.reason || "Unable to resolve X followers from handle/link.",
+              reason: result.reason || "Unable to resolve TikTok row followers from handle/link.",
             });
           }
         } catch (error) {
           skipped.push({
             platform,
             accountHandle: row.accountHandle,
-            reason: error.message || "Failed to fetch X followers.",
+            reason: error.message || "Failed to fetch TikTok row followers.",
           });
         }
       } else {

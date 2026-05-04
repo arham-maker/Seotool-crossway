@@ -111,7 +111,11 @@ export async function POST(req) {
 
     const prepared = rows
       .map((row) => ({
-        platform: normalizePlatform(row.platform),
+        platform: (() => {
+          const p = normalizePlatform(row.platform);
+          if (p === "linkedin") return "";
+          return p === "x" ? "tiktok" : p;
+        })(),
         accountName: String(row.accountName || "").trim() || null,
         accountHandle: String(row.accountHandle || "").trim() || null,
         statDate: toDateOnly(row.date),

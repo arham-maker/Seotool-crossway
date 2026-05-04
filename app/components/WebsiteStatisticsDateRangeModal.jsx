@@ -4,14 +4,15 @@ import { useState, useEffect, useId } from "react";
 import { getComparePresetRanges, getDateRangeForPresetId } from "../../lib/searchConsoleDateRanges";
 
 const FILTER_PRESETS = [
+  { id: "7d", label: "Last 7 days" },
+  { id: "28d", label: "Last 28 days" },
+  { id: "3m", label: "Last 3 months" },
   { id: "6m", label: "Last 6 months" },
   { id: "12m", label: "Last 12 months" },
   { id: "16m", label: "Last 16 months" },
 ];
 
 const COMPARE_PRESETS = [
-  { id: "c24h_prev", label: "Compare last 24 hours to previous period" },
-  { id: "c24h_wow", label: "Compare last 24 hours week over week" },
   { id: "c7d_prev", label: "Compare last 7 days to previous period" },
   { id: "c7d_yoy", label: "Compare last 7 days year over year" },
   { id: "c28d_prev", label: "Compare last 28 days to previous period" },
@@ -58,7 +59,7 @@ export function formatDisplayRange(start, end) {
 export default function WebsiteStatisticsDateRangeModal({ open, onClose, onApply, initial, defaultTab = "filter" }) {
   const titleId = useId();
   const [tab, setTab] = useState(defaultTab);
-  const [filterPreset, setFilterPreset] = useState("6m");
+  const [filterPreset, setFilterPreset] = useState("28d");
   const [comparePreset, setComparePreset] = useState("c3m_prev");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");

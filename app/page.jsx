@@ -5,7 +5,6 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import DashboardLayout from "./components/DashboardLayout";
 import DashboardSection from "./components/DashboardSection";
-import PerformanceReportSection from "./components/PerformanceReportSection";
 import SearchConsoleSection from "./components/SearchConsoleSection";
 import AdminSection from "./components/AdminSection";
 import AdminApprovalsSection from "./components/AdminApprovalsSection";
@@ -76,8 +75,6 @@ export default function Home() {
         ) : (
           <DashboardSection selectedSite={selectedSite} />
         );
-      case "reports":
-        return <PerformanceReportSection />;
       default:
         return <DashboardSection selectedSite={selectedSite} />;
     }

@@ -33,8 +33,15 @@ const DEFAULT_SMM_BASELINES = [
   { platform: "facebook", accountHandle: "", followers: "" },
   { platform: "instagram", accountHandle: "", followers: "" },
   { platform: "youtube", accountHandle: "", followers: "" },
-  { platform: "x", accountHandle: "", followers: "" },
+  { platform: "tiktok", accountHandle: "", followers: "" },
 ];
+
+const SMM_BASELINE_PLATFORM_LABEL = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+};
 
 export default function AdminSection() {
   const { data: session } = useSession();
@@ -228,7 +235,17 @@ export default function AdminSection() {
       const res = await fetch(`/api/admin/smm/baseline?${query.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const map = new Map((data.baselines || []).map((row) => [row.platform, row]));
+      const map = new Map();
+      for (const row of data.baselines || []) {
+        const key = row.platform === "x" ? "tiktok" : row.platform;
+        const existing = map.get(key);
+        if (
+          !existing ||
+          Number(row.followers || 0) >= Number(existing.followers || 0)
+        ) {
+          map.set(key, { ...row, platform: key });
+        }
+      }
       setSmmBaselines(
         DEFAULT_SMM_BASELINES.map((row) => ({
           ...row,
@@ -1253,16 +1270,16 @@ export default function AdminSection() {
                   {smmBaselines.map((row) => (
                     <div key={row.platform} className="space-y-1.5">
                       <div className="grid grid-cols-1 md:grid-cols-[120px_1fr_140px] gap-2">
-                      <div className="px-3 py-2 rounded border border-gray-200 bg-gray-50 text-sm capitalize text-gray-700">
-                        {row.platform}
+                      <div className="px-3 py-2 rounded border border-gray-200 bg-gray-50 text-sm text-gray-700">
+                        {SMM_BASELINE_PLATFORM_LABEL[row.platform] || row.platform}
                       </div>
                       <input
                         type="text"
                         value={row.accountHandle}
                         onChange={(e) => handleSmmBaselineChange(row.platform, "accountHandle", e.target.value)}
                         placeholder={
-                          row.platform === "x"
-                            ? "@handle, profile link, or numeric X user ID (optional)"
+                          row.platform === "tiktok"
+                            ? "@handle, profile link, or numeric user ID (optional)"
                             : "@handle or profile link (optional)"
                         }
                         className="px-3 py-2 border border-gray-200 rounded text-sm focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent"
@@ -1315,7 +1332,7 @@ export default function AdminSection() {
                     {savingSmmBaseline ? "Saving baseline..." : "Save SMM Baseline"}
                   </button>
                   <p className="text-xs text-gray-500">
-                    Auto-fetch supports YouTube and best-effort Facebook/Instagram/X from handles/links. For consistent production-grade data, connect official APIs and keep GTM ingestion enabled.
+                    Auto-fetch supports YouTube and best-effort Facebook/Instagram/TikTok from handles/links. For consistent production-grade data, connect official APIs and keep GTM ingestion enabled.
                   </p>
                 </div>
               )}

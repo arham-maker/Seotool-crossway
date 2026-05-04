@@ -87,6 +87,7 @@ export default function AdminApprovalsSection() {
   const [expandedApprovalId, setExpandedApprovalId] = useState(null);
   const [actionsMenuId, setActionsMenuId] = useState(null);
   const actionsMenuWrapRef = useRef(null);
+  const approvalImageInputRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -224,6 +225,7 @@ export default function AdminApprovalsSection() {
           : "Approval created and assigned."
       );
       setForm({ title: "", assigneeUserId: "", imageFile: null, approveOnAssignment: false });
+      if (approvalImageInputRef.current) approvalImageInputRef.current.value = "";
       await load();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("approvals:admin-refresh"));
@@ -283,15 +285,48 @@ export default function AdminApprovalsSection() {
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Image</label>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              onChange={(e) =>
-                setForm((f) => ({ ...f, imageFile: e.target.files?.[0] || null }))
-              }
-              className="w-full text-sm text-gray-700"
-            />
+            <span className="block text-sm font-semibold text-gray-700 mb-2">Image</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={approvalImageInputRef}
+                id="approval-new-image"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, imageFile: e.target.files?.[0] || null }))
+                }
+                className="sr-only"
+              />
+              <label
+                htmlFor="approval-new-image"
+                className="inline-flex items-center gap-2 px-4 py-2.5 border border-gray-300 rounded-xl bg-white text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50 cursor-pointer focus-within:outline-none focus-within:ring-2 focus-within:ring-gray-900 focus-within:ring-offset-2"
+              >
+                <FiImage className="w-4 h-4 shrink-0" aria-hidden />
+                Choose image file
+              </label>
+              {form.imageFile ? (
+                <>
+                  <span
+                    className="text-sm text-gray-700 truncate max-w-48 sm:max-w-xs"
+                    title={form.imageFile.name}
+                  >
+                    {form.imageFile.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-sm font-medium text-gray-600 hover:text-gray-900 underline underline-offset-2"
+                    onClick={() => {
+                      setForm((f) => ({ ...f, imageFile: null }));
+                      if (approvalImageInputRef.current) approvalImageInputRef.current.value = "";
+                    }}
+                  >
+                    Remove
+                  </button>
+                </>
+              ) : (
+                <span className="text-sm text-gray-500">Click the button to select an image.</span>
+              )}
+            </div>
             <p className="text-xs text-gray-500 mt-1">JPEG, PNG, WebP, or GIF — max 5 MB.</p>
           </div>
           <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-gray-200 bg-white px-4 py-3">
@@ -302,11 +337,8 @@ export default function AdminApprovalsSection() {
               className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-400"
             />
             <span>
-              <span className="block text-sm font-semibold text-gray-900">Approve on assignment</span>
+              <span className="block text-sm font-semibold text-gray-900">Requires client approval</span>
               <span className="block text-xs text-gray-600 mt-0.5">
-                When checked, the item is saved as approved immediately and is omitted from the assignee&apos;s
-                Approvals tab — they never need to approve it. When unchecked, the assignee must review and approve
-                (or edit / decline) as usual.
               </span>
             </span>
           </label>

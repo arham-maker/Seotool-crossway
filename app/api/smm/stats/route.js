@@ -3,6 +3,11 @@ import { authOptions } from "../../auth/[...nextauth]/route";
 import prisma from "../../../../lib/prisma";
 import { ROLES } from "../../../../lib/rbac";
 import { normalizeSiteOrigin } from "../../../../lib/validation";
+import {
+  describeReportPeriod,
+  formatYearMonth,
+  getCalendarMonthRange,
+} from "../../../../lib/smmReportMonthRange";
 
 export const runtime = "nodejs";
 
@@ -57,6 +62,31 @@ function pctChange(current, previous) {
   return ((curr - prev) / prev) * 100;
 }
 
+function canonicalSmmPlatform(value) {
+  const k = String(value || "").toLowerCase();
+  return k === "x" ? "tiktok" : k;
+}
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function buildMonthlyBreakdownFromRows(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const d = new Date(row.statDate);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const cur = map.get(key) || { monthKey: key, reach: 0, engagements: 0 };
+    cur.reach += Number(row.reach || 0);
+    cur.engagements += Number(row.engagements || 0);
+    map.set(key, cur);
+  }
+  return Array.from(map.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, v]) => ({
+      ...v,
+      monthLabel: `${MONTH_SHORT[parseInt(key.slice(5, 7), 10) - 1]} ${key.slice(0, 4)}`,
+    }));
+}
+
 function extractAccountName(accountHandle, fallbackName, fallbackPlatform) {
   const raw = String(accountHandle || "").trim();
   if (raw) {
@@ -89,10 +119,19 @@ export async function GET(req) {
     const role = session.user.role || ROLES.USER;
     const range = req.nextUrl.searchParams.get("range") || "28d";
     const platform = (req.nextUrl.searchParams.get("platform") || "all").toLowerCase();
+    const endMonthParam = req.nextUrl.searchParams.get("endMonth");
+    const monthSpanParam = req.nextUrl.searchParams.get("monthSpan");
 
-    let targetSite = role === ROLES.SUPER_ADMIN
-      ? (req.nextUrl.searchParams.get("url") || session.user.siteLink || "")
-      : (session.user.siteLink || "");
+    const fallbackSite =
+      session.user.siteLink ||
+      (Array.isArray(session.user.accessibleSites) && session.user.accessibleSites.length
+        ? session.user.accessibleSites[0]
+        : "");
+
+    let targetSite =
+      role === ROLES.SUPER_ADMIN
+        ? (req.nextUrl.searchParams.get("url") || fallbackSite || "")
+        : fallbackSite;
 
     targetSite = normalizeSiteOrigin(targetSite);
     if (!targetSite) {
@@ -117,17 +156,61 @@ export async function GET(req) {
       }
     }
 
-    const { start, end } = getDateRange(range);
+    if (role === ROLES.VIEWER || role === ROLES.SMM) {
+      const allowed = new Set(
+        (session.user.accessibleSites || []).map((s) => normalizeSiteOrigin(s)).filter(Boolean)
+      );
+      const ownLink = normalizeSiteOrigin(session.user.siteLink || "");
+      if (ownLink) allowed.add(ownLink);
+      if (!allowed.size || !allowed.has(targetSite)) {
+        return new Response(JSON.stringify({ error: "Access denied for selected site." }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    let start;
+    let end;
+    let rangeEffective = range;
+    let reportMeta = null;
+
+    if (endMonthParam && /^(\d{4})-(\d{2})$/.test(String(endMonthParam).trim())) {
+      const span = [1, 2, 3].includes(Number(monthSpanParam)) ? Number(monthSpanParam) : 1;
+      const { start: rs, end: re, endMonthClamped, monthSpan } = getCalendarMonthRange(endMonthParam, span);
+      start = rs;
+      end = re;
+      rangeEffective = `months:${monthSpan}m:end:${endMonthClamped}`;
+      reportMeta = {
+        mode: "calendar_months",
+        monthSpan,
+        endMonth: endMonthClamped,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        periodLabel: describeReportPeriod(start, end, monthSpan),
+      };
+    } else {
+      const r = getDateRange(range);
+      start = r.start;
+      end = r.end;
+    }
+    const platformWhere =
+      platform !== "all"
+        ? platform === "tiktok"
+          ? { platform: { in: ["tiktok", "x"] } }
+          : { platform }
+        : {};
     const filter = {
       siteLink: targetSite,
       statDate: { gte: start, lte: end },
-      ...(platform !== "all" ? { platform } : {}),
+      ...platformWhere,
     };
 
-    const rows = await prisma.socialMediaDailyStat.findMany({
+    const rawRows = await prisma.socialMediaDailyStat.findMany({
       where: filter,
       orderBy: [{ statDate: "asc" }, { platform: "asc" }],
     });
+    const rows = rawRows.filter((r) => String(r.platform || "").toLowerCase() !== "linkedin");
 
     const usersForSite = await prisma.user.findMany({
       where: { siteLink: targetSite },
@@ -137,12 +220,15 @@ export async function GET(req) {
 
     const gtmContainerId = usersForSite[0]?.gtmContainerId || null;
 
+    const monthlyBreakdown = buildMonthlyBreakdownFromRows(rows);
+
     if (!rows.length) {
       return new Response(
         JSON.stringify({
           siteUrl: targetSite,
-          range,
+          range: rangeEffective,
           platform,
+          monthlyBreakdown,
           summary: {
             totalReach: 0,
             totalEngagements: 0,
@@ -157,6 +243,14 @@ export async function GET(req) {
             message: "No SMM stats received yet. Configure GTM and push daily platform metrics to /api/smm/collect.",
             gtmContainerId,
           },
+          currentYearMonth: formatYearMonth(new Date()),
+          reportMeta:
+            reportMeta || {
+              mode: "rolling",
+              start: start.toISOString(),
+              end: end.toISOString(),
+              periodLabel: `${rangeEffective} (rolling window)`,
+            },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
@@ -165,11 +259,12 @@ export async function GET(req) {
     const latestByPlatform = new Map();
     const previousByPlatform = new Map();
     for (const row of rows) {
-      const key = row.platform;
+      const key = canonicalSmmPlatform(row.platform);
+      const normalizedRow = { ...row, platform: key };
       const prev = latestByPlatform.get(key);
       if (!prev || new Date(row.statDate) >= new Date(prev.statDate)) {
         if (prev) previousByPlatform.set(key, prev);
-        latestByPlatform.set(key, row);
+        latestByPlatform.set(key, normalizedRow);
       }
     }
 
@@ -229,8 +324,15 @@ export async function GET(req) {
     return new Response(
       JSON.stringify({
         siteUrl: targetSite,
-        range,
+        range: rangeEffective,
         platform,
+        monthlyBreakdown,
+        reportMeta: reportMeta || {
+          mode: "rolling",
+          start: start.toISOString(),
+          end: end.toISOString(),
+          periodLabel: `${rangeEffective} (rolling window)`,
+        },
         summary,
         platformCards,
         timeSeries,
@@ -245,6 +347,8 @@ export async function GET(req) {
           })),
         },
         lastUpdated: new Date().toISOString(),
+        /** YYYY-MM of current month (for report UI defaults). */
+        currentYearMonth: formatYearMonth(new Date()),
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );

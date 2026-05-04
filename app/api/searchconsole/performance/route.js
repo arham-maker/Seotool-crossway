@@ -17,14 +17,24 @@ export const runtime = "nodejs";
 
 const MAX_SPAN_DAYS = 500;
 
-function resolveRange(range, startDateQ, endDateQ) {
+/** Preset `range` values from the UI — must win over stray `startDate`/`endDate` query params. */
+const PRESET_RANGE_IDS = new Set(["7d", "28d", "3m", "6m", "12m", "16m"]);
+
+function resolveRange(rangeParam, startDateQ, endDateQ) {
+  const r = String(rangeParam || "").trim();
+  if (PRESET_RANGE_IDS.has(r)) {
+    return { ...getDateRangeForPresetId(r), range: r };
+  }
   if (isValidYMD(startDateQ) && isValidYMD(endDateQ) && startDateQ <= endDateQ) {
     if (inclusiveDayCountYMD(startDateQ, endDateQ) > MAX_SPAN_DAYS) {
       throw new Error(`Date range is too long (max ${MAX_SPAN_DAYS} days).`);
     }
     return { startDate: startDateQ, endDate: endDateQ, range: "custom" };
   }
-  return { ...getDateRangeForPresetId(range || "28d"), range: range || "28d" };
+  if (r) {
+    return { ...getDateRangeForPresetId(r), range: r };
+  }
+  return { ...getDateRangeForPresetId("28d"), range: "28d" };
 }
 
 /**
@@ -46,7 +56,7 @@ export async function GET(req) {
     }
 
     const userRole = session.user.role || ROLES.USER;
-    const range = req.nextUrl.searchParams.get("range") || "28d";
+    const rangeParam = req.nextUrl.searchParams.get("range");
     const startDateQ = req.nextUrl.searchParams.get("startDate");
     const endDateQ = req.nextUrl.searchParams.get("endDate");
     const compareStartQ = req.nextUrl.searchParams.get("compareStart");
@@ -54,11 +64,17 @@ export async function GET(req) {
     const page = parseInt(req.nextUrl.searchParams.get("page") || "1");
     const pageSize = parseInt(req.nextUrl.searchParams.get("pageSize") || "10");
 
+    const sessionSiteFallback =
+      session.user.siteLink ||
+      (Array.isArray(session.user.accessibleSites) && session.user.accessibleSites.length
+        ? session.user.accessibleSites[0]
+        : null);
+
     // Get site URL based on role
     let siteUrl;
     if (userRole === ROLES.SUPER_ADMIN) {
       // Super Admin can specify URL or use their own if available
-      siteUrl = req.nextUrl.searchParams.get("url") || session.user.siteLink;
+      siteUrl = req.nextUrl.searchParams.get("url") || sessionSiteFallback;
       if (!siteUrl || !isValidUrl(siteUrl)) {
         return new Response(
           JSON.stringify({ 
@@ -71,8 +87,7 @@ export async function GET(req) {
         );
       }
     } else {
-      // Regular user - use their linked site
-      siteUrl = session.user.siteLink;
+      siteUrl = sessionSiteFallback;
       if (!siteUrl) {
         return new Response(
           JSON.stringify({
@@ -96,7 +111,23 @@ export async function GET(req) {
         }
       );
     }
-    let { startDate, endDate, range: rangeResolved } = resolveRange(range, startDateQ, endDateQ);
+
+    if (userRole === ROLES.VIEWER || userRole === ROLES.SMM) {
+      const allowed = new Set(
+        (session.user.accessibleSites || []).map((s) => normalizeSiteOrigin(s)).filter(Boolean)
+      );
+      const own = normalizeSiteOrigin(session.user.siteLink || "");
+      if (own) allowed.add(own);
+      if (!allowed.size || !allowed.has(normalizedUrl)) {
+        return new Response(
+          JSON.stringify({
+            error: "Access denied. You can only view Search Console data for sites assigned to your account.",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    }
+    let { startDate, endDate, range: rangeResolved } = resolveRange(rangeParam, startDateQ, endDateQ);
     const primaryClamped = clampSearchConsoleQueryRange(startDate, endDate);
     startDate = primaryClamped.startDate;
     endDate = primaryClamped.endDate;
@@ -213,7 +244,10 @@ export async function GET(req) {
         }),
         {
           status: 200,
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "private, no-store, max-age=0",
+          },
         }
       );
     } catch (err) {

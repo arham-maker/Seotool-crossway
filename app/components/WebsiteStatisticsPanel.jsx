@@ -24,7 +24,6 @@ import WebsiteStatisticsDateRangeModal, {
 } from "./WebsiteStatisticsDateRangeModal";
 
 const RANGE_OPTIONS = [
-  { id: "24h", label: "24 hours" },
   { id: "7d", label: "7 days" },
   { id: "28d", label: "28 days" },
   { id: "3m", label: "3 months" },
@@ -58,7 +57,7 @@ function tableFooterLabel(t, payload) {
     return `Primary: ${formatDisplayRange(t.startDate, t.endDate)}`;
   }
   if (dr?.startDate && dr?.endDate) {
-    if (dr.range && dr.range !== "custom" && !["24h", "7d", "28d", "3m"].includes(dr.range)) {
+    if (dr.range && dr.range !== "custom" && !["7d", "28d", "3m"].includes(dr.range)) {
       if (dr.range === "6m") return "Last 6 months";
       if (dr.range === "12m") return "Last 12 months";
       if (dr.range === "16m") return "Last 16 months";
@@ -77,7 +76,6 @@ function getPrimaryPeriodCaption(t, dr) {
   if (t?.type === "preset" && t.range) {
     const o = RANGE_OPTIONS.find((r) => r.id === t.range);
     if (o) {
-      if (o.id === "24h") return "Last 24 hours";
       if (o.id === "7d") return "Last 7 days";
       if (o.id === "28d") return "Last 28 days";
       if (o.id === "3m") return "Last 3 months";
@@ -92,7 +90,6 @@ function getPrimaryPeriodCaption(t, dr) {
   if (t?.type === "compare") {
     const pr = t.comparePreset;
     if (pr && pr !== "custom") {
-      if (pr.startsWith("c24h_")) return "Last 24 hours";
       if (pr.startsWith("c7d_")) return "Last 7 days";
       if (pr.startsWith("c28d_")) return "Last 28 days";
       if (pr.startsWith("c3m_")) return "Last 3 months";
@@ -105,7 +102,6 @@ function getPrimaryPeriodCaption(t, dr) {
     if (dr.range && dr.range !== "custom") {
       const o = RANGE_OPTIONS.find((r) => r.id === dr.range);
       if (o) {
-        if (o.id === "24h") return "Last 24 hours";
         if (o.id === "7d") return "Last 7 days";
         if (o.id === "28d") return "Last 28 days";
         if (o.id === "3m") return "Last 3 months";
@@ -124,7 +120,6 @@ function getComparePeriodCaption(comparePreset) {
   if (!comparePreset || comparePreset === "custom") {
     return "Compare range";
   }
-  if (comparePreset === "c24h_wow") return "Same day last week";
   if (comparePreset.endsWith("_yoy")) return "Same period last year";
   if (comparePreset.endsWith("_prev")) return "Previous period";
   return "Compare range";
@@ -259,7 +254,9 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
       if (isSuperAdmin) {
         qs.set("url", effectiveSite);
       }
-      const res = await fetch(`/api/searchconsole/performance?${qs.toString()}`);
+      const res = await fetch(`/api/searchconsole/performance?${qs.toString()}`, {
+        cache: "no-store",
+      });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.userMessage || data.error || "Failed to fetch statistics");
@@ -278,7 +275,9 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
 
   const chartData = useMemo(() => {
     if (!payload?.timeSeries?.length) return [];
-    if (payload.compareTimeSeries?.length) {
+    const showCompare =
+      timeSelection.type === "compare" && (payload.compareTimeSeries?.length ?? 0) > 0;
+    if (showCompare) {
       const merged = mergeCompareTimeSeries(payload.timeSeries, payload.compareTimeSeries);
       return merged.map((item) => ({
         date: item.dateLabel,
@@ -301,14 +300,15 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
       ctr: (item.ctr || 0) * 100,
       position: item.position || 0,
     }));
-  }, [payload]);
+  }, [payload, timeSelection.type]);
 
   const maxCountryClicks = useMemo(() => {
     const values = (payload?.topCountries?.countries || []).map((c) => c.clicks || 0);
     return Math.max(1, ...values);
   }, [payload]);
 
-  const hasCompare = Boolean(payload?.compareTimeSeries?.length);
+  const hasCompare =
+    timeSelection.type === "compare" && Boolean(payload?.compareTimeSeries?.length);
   const footerText = useMemo(
     () => tableFooterLabel(timeSelection, payload),
     [timeSelection, payload]
@@ -364,8 +364,9 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
         cEnd: timeSelection.compareEnd,
       };
     }
+    const allFilterIds = ["7d", "28d", "3m", "6m", "12m", "16m"];
     return {
-      filterPreset: ["6m", "12m", "16m"].includes(timeSelection.range) ? timeSelection.range : "6m",
+      filterPreset: allFilterIds.includes(timeSelection.range) ? timeSelection.range : "28d",
       comparePreset: "c3m_prev",
     };
   }, [timeSelection]);
@@ -626,7 +627,13 @@ export default function WebsiteStatisticsPanel({ selectedSite = "", title = "Web
       </div>
 
       <div className="mb-5">
-        <div className="text-xs text-gray-500 mb-2">Last Updated: {getTimeAgo(payload?.lastUpdated)}</div>
+        <div className="text-xs text-gray-500 mb-2 space-y-0.5">
+          <p>Last Updated: {getTimeAgo(payload?.lastUpdated)}</p>
+          <p className="text-[10px] text-gray-400 leading-snug max-w-3xl">
+            Search Console usually finishes a calendar day after a ~2–3 day delay. Date ranges here end on the latest
+            complete day so filters match API results.
+          </p>
+        </div>
         <div className="h-[290px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>

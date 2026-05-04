@@ -13,9 +13,9 @@ import {
   FiChevronDown,
   FiLogOut,
   FiSettings,
-  FiFileText,
   FiHelpCircle,
   FiClipboard,
+  FiUsers,
 } from "react-icons/fi";
 
 const mainMenuItems = [
@@ -24,10 +24,15 @@ const mainMenuItems = [
   { id: "smm-statistics", label: "SMM Statistics", icon: FiTrendingUp },
 ];
 
+const userManagementMenuItem = {
+  id: "user-management",
+  label: "User Management",
+  icon: FiUsers,
+  role: "super_admin",
+};
+
 const adminMenuItems = [
-  { id: "user-management", label: "User Management", icon: FiSettings, role: "super_admin" },
   { id: "admin-approvals", label: "Approvals", icon: FiClipboard, role: "super_admin" },
-  { id: "reports", label: "Reports", icon: FiFileText },
 ];
 
 export default function DashboardLayout({
@@ -188,11 +193,8 @@ export default function DashboardLayout({
     setFailedSiteLogos((prev) => ({ ...prev, [siteUrl]: true }));
   };
 
-  const allMenuItems = [
-    ...mainMenuItems,
-    ...adminMenuItems.filter((item) => !item.role || session?.user?.role === item.role),
-  ];
   const isCompactSidebar = !isMobile && isSidebarCollapsed;
+  const UserMgmtIcon = userManagementMenuItem.icon;
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-50 transition-colors">
@@ -424,16 +426,9 @@ export default function DashboardLayout({
               );
             })}
             
-            {/* Admin Navigation (Super Admin only) */}
+            {/* Admin items (excludes User Management — see footer) */}
             {(session?.user?.role === "super_admin" || adminMenuItems.some((item) => !item.role)) && (
-              <>
-                {!isCompactSidebar && (
-                  <div className="pt-4 pb-2 px-3">
-                    <p className="text-[10px] font-semibold tracking-wider text-gray-500 uppercase">
-                      Administration
-                    </p>
-                  </div>
-                )}
+              <div className={isCompactSidebar ? "" : "pt-4"}>
                 {adminMenuItems
                   .filter((item) => !item.role || session?.user?.role === item.role)
                   .map((item) => {
@@ -478,7 +473,7 @@ export default function DashboardLayout({
                     </button>
                   );
                 })}
-              </>
+              </div>
             )}
           </nav>
 
@@ -520,6 +515,26 @@ export default function DashboardLayout({
                   </>
                 )}
               </div>
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSectionChange?.(userManagementMenuItem.id);
+                    if (isMobile) setSidebarOpen(false);
+                  }}
+                  className={`w-full flex items-center ${isCompactSidebar ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-2 hover:bg-white transition-colors ${
+                    activeSection === userManagementMenuItem.id
+                      ? "bg-white text-gray-900 font-medium"
+                      : "text-gray-600"
+                  }`}
+                  aria-current={activeSection === userManagementMenuItem.id ? "page" : undefined}
+                >
+                  <UserMgmtIcon
+                    className={`w-4 h-4 ${activeSection === userManagementMenuItem.id ? "text-[#1d9c35]" : ""}`}
+                  />
+                  {!isCompactSidebar && <span>{userManagementMenuItem.label}</span>}
+                </button>
+              )}
               <button className={`w-full flex items-center ${isCompactSidebar ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-2 hover:bg-white transition-colors`}>
                 <FiHelpCircle className="w-4 h-4" />
                 {!isCompactSidebar && <span>Help Center</span>}
