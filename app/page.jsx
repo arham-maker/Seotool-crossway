@@ -62,21 +62,25 @@ export default function Home() {
   const renderSection = () => {
     switch (activeSection) {
       case "dashboard":
-        return <DashboardSection selectedSite={selectedSite} />;
+        return <DashboardSection selectedSite={selectedSite} onNavigate={setActiveSection} />;
       case "website-statistics":
         return <SearchConsoleSection selectedSite={selectedSite} />;
       case "smm-statistics":
         return <SmmStatisticsSection selectedSite={selectedSite} />;
       case "user-management":
-        return session?.user?.role === "super_admin" ? <AdminSection /> : <DashboardSection />;
+        return session?.user?.role === "super_admin" ? (
+          <AdminSection />
+        ) : (
+          <DashboardSection selectedSite={selectedSite} onNavigate={setActiveSection} />
+        );
       case "admin-approvals":
         return session?.user?.role === "super_admin" ? (
           <AdminApprovalsSection />
         ) : (
-          <DashboardSection selectedSite={selectedSite} />
+          <DashboardSection selectedSite={selectedSite} onNavigate={setActiveSection} />
         );
       default:
-        return <DashboardSection selectedSite={selectedSite} />;
+        return <DashboardSection selectedSite={selectedSite} onNavigate={setActiveSection} />;
     }
   };
 

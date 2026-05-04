@@ -556,7 +556,17 @@ export default function DashboardLayout({
         </button>
  
         {/* Main Content Area */}
-        <main className="pl-2 pr-2 pt-2 pb-2 lg:pl-1 lg:pr-2 lg:pt-2 lg:pb-2 bg-[#F0F0F0] min-h-screen">{children}</main>
+        <main
+          className={`pl-2 pr-2 pt-2 pb-2 lg:pl-1 lg:pr-2 lg:pt-2 lg:pb-2 min-h-screen transition-colors ${
+            activeSection === "dashboard" ? "bg-[#F0F0F0]" : "bg-[#F0F0F0]"
+          }`}
+        >
+          {activeSection === "dashboard" ? (
+            <div className="rounded-xl border border-gray-200 bg-[#ffffff] p-5">{children}</div>
+          ) : (
+            children
+          )}
+        </main>
       </div>
     </div>
   );
