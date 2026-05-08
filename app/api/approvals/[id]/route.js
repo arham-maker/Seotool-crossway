@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 const OPEN_STATUSES = new Set(["pending", "edited"]);
 
-/** PATCH — assignee: approve | decline | edit (text only; image unchanged) */
+/** PATCH — assignee: approve | decline | edit (text only; image unchanged). approve may send editedText to persist caption in one step. */
 export async function PATCH(req, { params }) {
   try {
     const session = await getServerSession(authOptions);
@@ -53,14 +53,25 @@ export async function PATCH(req, { params }) {
     const now = new Date();
 
     if (action === "approve") {
+      const approveData = {
+        status: "approved",
+        lastAction: "approve",
+        respondedAt: now,
+        awaitingAdminReview: true,
+      };
+      if (body.editedText !== undefined) {
+        const editedTextForApprove = String(body.editedText ?? "").trim();
+        if (editedTextForApprove.length > 20000) {
+          return new Response(JSON.stringify({ error: "Edited text is too long (max 20000 characters)." }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        approveData.userEditedText = editedTextForApprove || null;
+      }
       await prisma.approval.update({
         where: { id },
-        data: {
-          status: "approved",
-          lastAction: "approve",
-          respondedAt: now,
-          awaitingAdminReview: true,
-        },
+        data: approveData,
       });
     } else if (action === "decline") {
       await prisma.approval.update({

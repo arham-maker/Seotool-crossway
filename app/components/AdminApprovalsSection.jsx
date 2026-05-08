@@ -14,12 +14,7 @@ import {
   FiEye,
   FiEyeOff,
 } from "react-icons/fi";
-
-const ROLES = { SUPER_ADMIN: "super_admin" };
-
-function isSuperAdminRole(role) {
-  return String(role || "").toLowerCase() === ROLES.SUPER_ADMIN;
-}
+import ApprovalMediaPreview from "./ApprovalMediaPreview";
 
 function formatDateTime(iso) {
   if (!iso) return "—";
@@ -69,8 +64,7 @@ function userResponseSummary(a) {
   };
 }
 
-export default function AdminApprovalsSection() {
-  const [users, setUsers] = useState([]);
+export default function AdminApprovalsSection({ selectedSite = "" }) {
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -79,7 +73,6 @@ export default function AdminApprovalsSection() {
   const [approvalsListWarning, setApprovalsListWarning] = useState("");
   const [form, setForm] = useState({
     title: "",
-    assigneeUserId: "",
     imageFile: null,
     /** If true, record as approved on create (assignee does not need to act). */
     approveOnAssignment: false,
@@ -94,14 +87,6 @@ export default function AdminApprovalsSection() {
     setError("");
     setApprovalsListWarning("");
     try {
-      const uRes = await fetch("/api/admin/users?includeInactive=true");
-      const uData = await uRes.json();
-      if (!uRes.ok) {
-        throw new Error(uData.error || "Failed to load users");
-      }
-      const assignable = (uData.users || []).filter((u) => !isSuperAdminRole(u.role));
-      setUsers(assignable);
-
       try {
         const aRes = await fetch("/api/admin/approvals");
         const aData = await aRes.json();
@@ -117,12 +102,11 @@ export default function AdminApprovalsSection() {
         setApprovals([]);
         setApprovalsListWarning(
           `Could not load approvals (${aErr.message || "network error"}). ` +
-            "Apply the approvals migration if needed; the assignee dropdown is unaffected."
+            "Apply the approvals migration if needed."
         );
       }
     } catch (e) {
       setError(e.message);
-      setUsers([]);
       setApprovals([]);
     } finally {
       setLoading(false);
@@ -201,11 +185,11 @@ export default function AdminApprovalsSection() {
     setError("");
     setSuccess("");
     if (!form.imageFile) {
-      setError("Please choose an image.");
+      setError("Please choose an image or video file.");
       return;
     }
-    if (!form.assigneeUserId) {
-      setError("Please select a user to assign this approval to.");
+    if (!selectedSite.trim()) {
+      setError("Please select a site from Site Dashboard before creating an approval.");
       return;
     }
     setSubmitting(true);
@@ -214,7 +198,7 @@ export default function AdminApprovalsSection() {
       const fd = new FormData();
       fd.append("image", form.imageFile);
       fd.append("title", form.title.trim());
-      fd.append("assigneeUserId", form.assigneeUserId);
+      fd.append("selectedSite", selectedSite);
       fd.append("approveOnAssignment", wasApproveOnAssignment ? "1" : "0");
       const res = await fetch("/api/admin/approvals", { method: "POST", body: fd });
       const data = await res.json();
@@ -224,7 +208,7 @@ export default function AdminApprovalsSection() {
           ? "Approval created and recorded as approved (assignee does not need to review)."
           : "Approval created and assigned."
       );
-      setForm({ title: "", assigneeUserId: "", imageFile: null, approveOnAssignment: false });
+      setForm({ title: "", imageFile: null, approveOnAssignment: false });
       if (approvalImageInputRef.current) approvalImageInputRef.current.value = "";
       await load();
       if (typeof window !== "undefined") {
@@ -285,13 +269,13 @@ export default function AdminApprovalsSection() {
             />
           </div>
           <div>
-            <span className="block text-sm font-semibold text-gray-700 mb-2">Image</span>
+            <span className="block text-sm font-semibold text-gray-700 mb-2">Image or video</span>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 ref={approvalImageInputRef}
                 id="approval-new-image"
                 type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
+                accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
                 onChange={(e) =>
                   setForm((f) => ({ ...f, imageFile: e.target.files?.[0] || null }))
                 }
@@ -302,7 +286,7 @@ export default function AdminApprovalsSection() {
                 className="inline-flex items-center gap-2 px-4 py-2.5 border border-gray-300 rounded-xl bg-white text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50 cursor-pointer focus-within:outline-none focus-within:ring-2 focus-within:ring-gray-900 focus-within:ring-offset-2"
               >
                 <FiImage className="w-4 h-4 shrink-0" aria-hidden />
-                Choose image file
+                Choose media file
               </label>
               {form.imageFile ? (
                 <>
@@ -324,10 +308,12 @@ export default function AdminApprovalsSection() {
                   </button>
                 </>
               ) : (
-                <span className="text-sm text-gray-500">Click the button to select an image.</span>
+                <span className="text-sm text-gray-500">Click to select image or video.</span>
               )}
             </div>
-            <p className="text-xs text-gray-500 mt-1">JPEG, PNG, WebP, or GIF — max 5 MB.</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Images: JPEG, PNG, WebP, or GIF — max 5 MB. Videos: MP4, WebM, or MOV — max 100 MB.
+            </p>
           </div>
           <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-gray-200 bg-white px-4 py-3">
             <input
@@ -337,38 +323,24 @@ export default function AdminApprovalsSection() {
               className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-400"
             />
             <span>
-              <span className="block text-sm font-semibold text-gray-900">Requires client approval</span>
+              <span className="block text-sm font-semibold text-gray-900">No Requires Client Approval</span>
               <span className="block text-xs text-gray-600 mt-0.5">
               </span>
             </span>
           </label>
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Assign to user</label>
-            <select
-              required
-              value={form.assigneeUserId}
-              onChange={(e) => setForm((f) => ({ ...f, assigneeUserId: e.target.value }))}
-              className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-white text-gray-900"
-            >
-              <option value="">
-                {users.length === 0 ? "No assignable users — add users first" : "Select user…"}
-              </option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {(u.name || u.email) + ` (${u.email})`}
-                </option>
-              ))}
-            </select>
-            {users.length === 0 && (
-              <p className="mt-2 text-xs text-gray-600">
-                Super Admin accounts are excluded. Create <strong>User</strong> or <strong>Viewer</strong> accounts under{" "}
-                <strong>User Management</strong> if the list is empty.
-              </p>
-            )}
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Assignment source</label>
+            <div className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-white text-sm text-gray-900">
+              {selectedSite ? (
+                <>Auto-assigned from Site Dashboard selection: {selectedSite}</>
+              ) : (
+                "No site selected. Choose a site from Site Dashboard first."
+              )}
+            </div>
           </div>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !selectedSite.trim()}
             className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-semibold disabled:opacity-60"
           >
             <FiImage className="w-4 h-4" />
@@ -544,14 +516,13 @@ export default function AdminApprovalsSection() {
                         <div className="grid gap-4 lg:grid-cols-[minmax(0,280px)_1fr]">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                              Image
+                              Media preview
                             </p>
                             <div className="rounded-lg border border-gray-200 overflow-hidden bg-white">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
+                              <ApprovalMediaPreview
                                 src={a.imagePath}
-                                alt=""
-                                className="w-full max-h-[220px] object-contain"
+                                className="w-full max-h-[220px] object-contain bg-black"
+                                videoControls
                               />
                             </div>
                           </div>

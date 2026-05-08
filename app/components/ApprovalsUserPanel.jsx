@@ -2,10 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { FiCheck, FiEdit2, FiX, FiRefreshCw, FiChevronDown, FiChevronUp } from "react-icons/fi";
+import ApprovalMediaPreview from "./ApprovalMediaPreview";
 
 function displayBody(a) {
   if (a.userEditedText && String(a.userEditedText).trim()) return a.userEditedText;
   return a.bodyText || "";
+}
+
+/** Row headline: prefer persisted user caption/editorial text, then admin title. */
+function displayHeadline(a) {
+  const fromBody = String(displayBody(a) || "").trim();
+  if (fromBody) return fromBody;
+  return String(a.title || "").trim() || "Approval";
 }
 
 export default function ApprovalsUserPanel() {
@@ -81,7 +89,7 @@ export default function ApprovalsUserPanel() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Review heading and image from your administrator. You can edit the <strong>text</strong> only (image stays
+          Review the heading and media from your administrator. You can edit the <strong>text</strong> only (media stays
           fixed), then approve, save your edit, or decline. Items your administrator marked as approved on assignment do
           not appear here — no action needed from you.
         </p>
@@ -117,7 +125,7 @@ export default function ApprovalsUserPanel() {
                   className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50/80"
                 >
                   <div>
-                    <p className="font-semibold text-gray-900">{a.title}</p>
+                    <p className="font-semibold text-gray-900">{displayHeadline(a)}</p>
                     <p className="text-xs text-gray-500 capitalize mt-0.5">
                       {a.status}
                       {closed && a.respondedAt ? ` · ${new Date(a.respondedAt).toLocaleString()}` : ""}
@@ -132,11 +140,10 @@ export default function ApprovalsUserPanel() {
                 {open && (
                   <div className="px-4 pb-4 border-t border-gray-100 pt-4 space-y-4">
                     <div className="rounded-lg border border-gray-100 overflow-hidden bg-gray-50">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
+                      <ApprovalMediaPreview
                         src={a.imagePath}
-                        alt=""
-                        className="w-full max-h-[320px] object-contain bg-white"
+                        className="w-full max-h-[320px] object-contain bg-black"
+                        videoControls
                       />
                     </div>
                     {bodyShown ? (
@@ -149,7 +156,7 @@ export default function ApprovalsUserPanel() {
                       <>
                         <div>
                           <label className="block text-xs font-semibold text-gray-600 mb-1">
-                            Edit text only (image cannot be changed)
+                            Edit text only (media cannot be changed)
                           </label>
                           <textarea
                             rows={4}
@@ -162,7 +169,12 @@ export default function ApprovalsUserPanel() {
                           <button
                             type="button"
                             disabled={acting}
-                            onClick={() => patch(a.id, { action: "approve" })}
+                            onClick={() =>
+                              patch(a.id, {
+                                action: "approve",
+                                editedText: editDraft,
+                              })
+                            }
                             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0EFF2A] hover:bg-[#0BCC22] text-white text-sm font-semibold disabled:opacity-50"
                           >
                             <FiCheck className="w-4 h-4" />

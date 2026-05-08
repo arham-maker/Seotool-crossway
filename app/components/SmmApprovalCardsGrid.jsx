@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { FiRefreshCw } from "react-icons/fi";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FiRefreshCw, FiX, FiZoomIn, FiZoomOut } from "react-icons/fi";
+import ApprovalMediaPreview from "./ApprovalMediaPreview";
+import { isApprovalVideoPath } from "../../lib/approvalMedia";
 
 function normalizeSiteUrl(raw) {
   const s = String(raw || "").trim();
@@ -25,17 +27,168 @@ function formatCardWhen(iso) {
 }
 
 /** Thumbnail inside black frame (approval card). */
-function MediaPreview({ imagePath, title }) {
-  const alt = String(title || "Post or reel preview").trim() || "Preview";
+function MediaThumbnail({ mediaPath, title }) {
   return (
-    <div className="relative w-full overflow-hidden rounded-lg border-[3px] border-black bg-black aspect-video">
-      {imagePath ? (
-        <img src={imagePath} alt={alt} className="absolute inset-0 h-full w-full object-cover" />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center bg-neutral-800 text-sm text-neutral-400">
-          No preview
+    <div className="relative w-full overflow-hidden rounded-lg border-[3px] border-black bg-black aspect-video pointer-events-none">
+      <ApprovalMediaPreview
+        src={mediaPath}
+        alt={String(title || "Post or reel preview").trim() || "Preview"}
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+      {mediaPath && isApprovalVideoPath(mediaPath) ? (
+        <span className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+          Video
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function ApprovalPreviewModal({ item, open, onClose }) {
+  const [zoom, setZoom] = useState(1);
+  const scrollRef = useRef(null);
+  const videoRef = useRef(null);
+  const path = item?.imagePath;
+
+  useEffect(() => {
+    if (open && item?.id) {
+      setZoom(1);
+    }
+  }, [open, item?.id]);
+
+  const isVideo = Boolean(path && isApprovalVideoPath(path));
+
+  useEffect(() => {
+    const onEscape = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    if (open) {
+      document.addEventListener("keydown", onEscape);
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.removeEventListener("keydown", onEscape);
+        document.body.style.overflow = prevOverflow;
+        if (videoRef.current) {
+          videoRef.current.pause();
+        }
+      };
+    }
+  }, [open, onClose]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!open || isVideo || !el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const step = e.deltaY > 0 ? -0.12 : 0.12;
+      setZoom((z) => {
+        const n = Math.round((z + step) * 100) / 100;
+        return Math.min(5, Math.max(1, n));
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [open, isVideo]);
+
+  const bumpZoom = useCallback((delta) => {
+    setZoom((z) => {
+      const n = Math.round((z + delta) * 100) / 100;
+      return Math.min(5, Math.max(1, n));
+    });
+  }, []);
+
+  if (!open || !item || !path) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="approval-modal-title"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="relative flex max-h-[92vh] w-full max-w-[min(1100px,95vw)] flex-col rounded-2xl bg-neutral-950 shadow-2xl border border-neutral-700"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label="Close preview"
+          className="absolute right-3 top-3 z-10 rounded-full bg-neutral-900/95 p-2 text-white hover:bg-neutral-800 border border-neutral-700"
+          onClick={onClose}
+        >
+          <FiX className="h-5 w-5 shrink-0" />
+        </button>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 p-5 pt-14">
+          <h2 id="approval-modal-title" className="pr-12 text-lg font-semibold text-white line-clamp-2 leading-snug">
+            {item.title}
+          </h2>
+          {isVideo ? (
+            <video
+              ref={videoRef}
+              src={path}
+              controls
+              playsInline
+              preload="metadata"
+              className="mx-auto max-h-[min(78vh,calc(100vh-200px))] w-full rounded-lg bg-black object-contain"
+            />
+          ) : (
+            <>
+              <div
+                ref={scrollRef}
+                className="flex max-h-[min(78vh,calc(100vh-200px))] min-h-[220px] w-full overflow-auto rounded-lg bg-neutral-900/80 border border-neutral-800 cursor-grab active:cursor-grabbing"
+              >
+                <div className="flex m-auto items-center justify-center p-6 min-h-min min-w-min">
+                  <div
+                    style={{
+                      transform: `scale(${zoom})`,
+                      transformOrigin: "center center",
+                      transition: "transform 0.1s ease-out",
+                    }}
+                    className="inline-block shadow-lg"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={path}
+                      alt=""
+                      draggable={false}
+                      className="max-w-none max-h-none object-contain"
+                      style={{ maxWidth: "min(88vw, 900px)", maxHeight: "min(70vh, 800px)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+                <button
+                  type="button"
+                  disabled={zoom <= 1}
+                  onClick={() => bumpZoom(-0.25)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 font-medium text-white hover:bg-neutral-800 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <FiZoomOut className="h-4 w-4" aria-hidden />
+                  Zoom out
+                </button>
+                <span className="min-w-[3.75rem] text-center tabular-nums text-neutral-400">{Math.round(zoom * 100)}%</span>
+                <button
+                  type="button"
+                  disabled={zoom >= 5}
+                  onClick={() => bumpZoom(0.25)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 font-medium text-white hover:bg-neutral-800 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <FiZoomIn className="h-4 w-4" aria-hidden />
+                  Zoom in
+                </button>
+                <span className="text-neutral-500 text-xs w-full text-center mt-1 sm:mt-0 sm:w-auto sm:ml-2">
+                  Scroll wheel also zooms
+                </span>
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -63,6 +216,7 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [modalItem, setModalItem] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -160,6 +314,7 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
 
   return (
     <div>
+      <ApprovalPreviewModal item={modalItem} open={Boolean(modalItem)} onClose={() => setModalItem(null)} />
       <div className="flex justify-end mb-3">
         <button
           type="button"
@@ -185,10 +340,21 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3 xl:grid-cols-4">
           {approvedItems.map((a) => {
             const displayWhen = a.respondedAt || a.updatedAt || a.createdAt;
+            const label = String(a.title || "Approval preview").trim() || "Open approval preview";
             return (
-              <article
+              <div
                 key={a.id}
-                className="flex flex-col rounded-2xl bg-[#F9F9F9] p-5 font-sans shadow-[0_4px_14px_rgba(0,0,0,0.08)] sm:p-6"
+                role="button"
+                tabIndex={0}
+                aria-label={`${label}; open enlarged preview`}
+                onClick={() => setModalItem(a)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setModalItem(a);
+                  }
+                }}
+                className="flex cursor-pointer flex-col rounded-2xl bg-[#F9F9F9] p-5 font-sans shadow-[0_4px_14px_rgba(0,0,0,0.08)] transition-transform hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(0,0,0,0.12)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#31c655] focus-visible:ring-offset-2 sm:p-6"
               >
                 <header className="mb-5 flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -198,8 +364,8 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
                     </p>
                   </div>
                 </header>
-                <MediaPreview imagePath={a.imagePath} title={a.title} />
-              </article>
+                <MediaThumbnail mediaPath={a.imagePath} title={a.title} />
+              </div>
             );
           })}
         </div>

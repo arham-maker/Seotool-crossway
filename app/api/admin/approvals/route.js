@@ -8,15 +8,43 @@ import { ROLES } from "../../../../lib/rbac";
 
 export const runtime = "nodejs";
 
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+/** MP4/WebM/MOV broadly supported for in-browser playback. */
+const VIDEO_TYPES = new Set([
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+]);
+const ALLOWED_TYPES = new Set([...IMAGE_TYPES, ...VIDEO_TYPES]);
+
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
+
+function normalizeSiteForMatch(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  try {
+    const u = new URL(s.startsWith("http") ? s : `https://${s}`);
+    const pathPart = u.pathname.replace(/\/+$/, "") || "";
+    return `${u.hostname.toLowerCase()}${pathPart}`;
+  } catch {
+    return s.replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+  }
+}
 
 function extFromMime(mime) {
   if (mime === "image/jpeg") return ".jpg";
   if (mime === "image/png") return ".png";
   if (mime === "image/webp") return ".webp";
   if (mime === "image/gif") return ".gif";
+  if (mime === "video/mp4") return ".mp4";
+  if (mime === "video/webm") return ".webm";
+  if (mime === "video/quicktime") return ".mov";
   return "";
+}
+
+function mediaMaxBytes(mime) {
+  return VIDEO_TYPES.has(mime) ? VIDEO_MAX_BYTES : IMAGE_MAX_BYTES;
 }
 
 /** GET — list approvals (optional ?countOnly=1 for unread badge) */
@@ -61,7 +89,7 @@ export async function GET(req) {
   }
 }
 
-/** POST — multipart: image (file), title, assigneeUserId, optional approveOnAssignment ("1" / "true" / "on") */
+/** POST — multipart: media file field `image` (legacy key), title, selectedSite, optional approveOnAssignment */
 export async function POST(req) {
   try {
     const session = await requireSuperAdmin();
@@ -69,7 +97,7 @@ export async function POST(req) {
     const form = await req.formData();
     const image = form.get("image");
     const title = String(form.get("title") || "").trim();
-    const assigneeUserId = String(form.get("assigneeUserId") || "").trim();
+    const selectedSite = String(form.get("selectedSite") || "").trim();
     const approveOnAssignmentRaw = form.get("approveOnAssignment");
     const approveOnAssignment =
       approveOnAssignmentRaw === "1" ||
@@ -82,15 +110,15 @@ export async function POST(req) {
         headers: { "Content-Type": "application/json" },
       });
     }
-    if (!assigneeUserId) {
-      return new Response(JSON.stringify({ error: "Assignee is required." }), {
+    if (!selectedSite) {
+      return new Response(JSON.stringify({ error: "Selected site is required." }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
 
     if (!image || typeof image === "string" || !image.size) {
-      return new Response(JSON.stringify({ error: "Image file is required." }), {
+      return new Response(JSON.stringify({ error: "Image or video file is required." }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
@@ -99,21 +127,80 @@ export async function POST(req) {
     const mime = image.type || "";
     if (!ALLOWED_TYPES.has(mime)) {
       return new Response(
-        JSON.stringify({ error: "Invalid image type. Use JPEG, PNG, WebP, or GIF." }),
+        JSON.stringify({
+          error:
+            "Invalid file type. Use JPEG, PNG, WebP, or GIF images, or MP4, WebM, or MOV video.",
+        }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
-    if (image.size > MAX_BYTES) {
-      return new Response(JSON.stringify({ error: "Image must be 5 MB or smaller." }), {
+
+    const ext = extFromMime(mime);
+    if (!ext) {
+      return new Response(JSON.stringify({ error: "Could not derive file extension for this MIME type." }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    const assignee = await prisma.user.findUnique({
-      where: { id: assigneeUserId },
-      select: { id: true, role: true },
+    const maxAllowed = mediaMaxBytes(mime);
+    if (image.size > maxAllowed) {
+      const mb = VIDEO_TYPES.has(mime) ? Math.round(VIDEO_MAX_BYTES / (1024 * 1024)) : 5;
+      return new Response(
+        JSON.stringify({
+          error: VIDEO_TYPES.has(mime)
+            ? `Video must be ${mb} MB or smaller.`
+            : `Image must be ${mb} MB or smaller.`,
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const normalizedSelectedSite = normalizeSiteForMatch(selectedSite);
+    const candidateUsers = await prisma.user.findMany({
+      where: { role: { not: ROLES.SUPER_ADMIN } },
+      select: {
+        id: true,
+        role: true,
+        siteLink: true,
+        accessibleSites: { select: { siteLink: true } },
+      },
     });
+
+    const matchedUsers = candidateUsers.filter((u) => {
+      const primary = normalizeSiteForMatch(u.siteLink);
+      if (primary && primary === normalizedSelectedSite) return true;
+      return (u.accessibleSites || []).some(
+        (entry) => normalizeSiteForMatch(entry.siteLink) === normalizedSelectedSite
+      );
+    });
+
+    if (matchedUsers.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "No mapped user found for the selected site." }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+    if (matchedUsers.length > 1) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "Multiple users are mapped to the selected site. Keep a single mapped user per site before creating approvals.",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const assignee = matchedUsers[0];
     if (!assignee) {
       return new Response(JSON.stringify({ error: "Assignee user not found." }), {
         status: 400,
@@ -128,7 +215,6 @@ export async function POST(req) {
     }
 
     const buf = Buffer.from(await image.arrayBuffer());
-    const ext = extFromMime(mime);
     const fileName = `${crypto.randomBytes(20).toString("hex")}${ext}`;
     const uploadsDir = path.join(process.cwd(), "public", "uploads", "approvals");
     await mkdir(uploadsDir, { recursive: true });
@@ -143,7 +229,7 @@ export async function POST(req) {
         title,
         bodyText: "",
         imagePath,
-        assigneeId: assigneeUserId,
+        assigneeId: assignee.id,
         createdById: session.user.id,
         status: approveOnAssignment ? "approved" : "pending",
         lastAction: approveOnAssignment ? "approve" : null,

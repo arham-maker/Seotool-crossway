@@ -10,12 +10,8 @@ import SmmApprovalCardsGrid from "./SmmApprovalCardsGrid";
 import SmmDownloadReportModal from "./SmmDownloadReportModal";
 import { formatYearMonth } from "../../lib/smmReportMonthRange";
 
-const RANGE_OPTIONS = [
-  { id: "7d", label: "7 days" },
-  { id: "28d", label: "28 days" },
-  { id: "3m", label: "3 months" },
-  { id: "12m", label: "12 months" },
-];
+/** Fixed window for `/api/smm/stats` (range controls removed from UI). */
+const SMM_STATS_RANGE = "3m";
 
 const PLATFORM_OPTIONS = [
   { id: "all", label: "All platforms" },
@@ -58,22 +54,6 @@ function metricLabel(platform) {
   return "Followers";
 }
 
-function accountDisplayName(accountName, accountHandle, platform) {
-  const raw = String(accountHandle || "").trim();
-  if (raw) {
-    if (raw.startsWith("@")) return raw.slice(1).trim();
-    try {
-      const parsed = new URL(raw);
-      const first = parsed.pathname.split("/").filter(Boolean)[0] || "";
-      if (first.startsWith("@")) return first.slice(1).trim();
-      if (first) return first.trim();
-    } catch {
-      return raw.replace(/^@/, "").trim();
-    }
-  }
-  return String(accountName || platformLabel(platform)).trim();
-}
-
 function platformMark(platform) {
   const key = String(platform || "").toLowerCase();
   if (key === "facebook") return "f";
@@ -81,13 +61,6 @@ function platformMark(platform) {
   if (key === "youtube") return "▶";
   if (key === "tiktok" || key === "x") return "♪";
   return "•";
-}
-
-function formatPct(value) {
-  const v = Number(value || 0);
-  if (!Number.isFinite(v)) return "+0.00%";
-  const sign = v >= 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
 }
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -164,7 +137,7 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
     setError("");
     try {
       const query = new URLSearchParams({
-        range,
+        range: SMM_STATS_RANGE,
         platform,
         ...(isSuperAdmin ? { url: activeSite } : {}),
       });
@@ -179,7 +152,7 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
     } finally {
       setLoading(false);
     }
-  }, [activeSite, isSuperAdmin, platform, range]);
+  }, [activeSite, isSuperAdmin, platform]);
 
   useEffect(() => {
     fetchStats();
@@ -187,7 +160,6 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
 
   const cards = payload?.platformCards || [];
   const timeSeries = payload?.timeSeries || [];
-  const accounts = payload?.accounts || [];
   const setup = payload?.setup || null;
 
   const chartYearFromSeries = useMemo(() => {
@@ -230,12 +202,12 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
             </p>
             <p className="text-sm text-gray-600 mt-1">
               <span className="font-medium text-gray-800">Site:</span> {activeSite || "—"}
-              {setup?.gtmContainerId ? (
+              {/* {setup?.gtmContainerId ? (
                 <span className="text-gray-500">
                   {" "}
                   · <span className="font-medium text-gray-800">GTM:</span> {setup.gtmContainerId}
                 </span>
-              ) : null}
+              ) : null} */}
             </p>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-end gap-3 shrink-0">
@@ -268,20 +240,6 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
-          {RANGE_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => setRange(option.id)}
-              className={`px-3 py-1.5 rounded-md border text-sm ${
-                range === option.id
-                  ? "bg-[#dff7de] border-[#c4edc2] text-gray-900"
-                  : "bg-white border-gray-200 text-gray-700"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
           <select
             value={platform}
             onChange={(e) => setPlatform(e.target.value)}
@@ -430,54 +388,6 @@ export default function SmmStatisticsSection({ selectedSite = "" }) {
                 </div>
                 <SmmApprovalCardsGrid isSuperAdmin={isSuperAdmin} activeSite={activeSite} />
               </>
-            )}
-          </div>
-
-          <div className="mt-5 rounded-xl border border-gray-200 overflow-hidden bg-white">
-            <div className="grid grid-cols-[1.3fr_1fr_1fr_1fr_1fr] px-4 py-3 text-[11px] font-semibold text-gray-700 border-b border-gray-200">
-              <span>Account Name</span>
-              <span className="text-center">Reach</span>
-              <span className="text-center">Engagements</span>
-              <span className="text-center">Queued posts</span>
-              <span className="text-center">Queued reels</span>
-            </div>
-            {accounts.length > 0 ? (
-              accounts.map((row) => {
-                const rowIcon = PlatformIcon({ platform: row.platform });
-                return (
-                <div
-                  key={`${row.platform}-${row.accountName}`}
-                  className="grid grid-cols-[1.3fr_1fr_1fr_1fr_1fr] px-4 py-2.5 border-b border-gray-100 last:border-b-0 text-sm"
-                >
-                  <span className="flex items-center gap-2 text-gray-800 min-w-0">
-                    {rowIcon ? (
-                      <span className="inline-flex shrink-0 items-center justify-center text-gray-700" aria-hidden>
-                        {rowIcon}
-                      </span>
-                    ) : (
-                      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[9px] text-gray-600 font-semibold">
-                        {platformMark(row.platform)}
-                      </span>
-                    )}
-                    <span className="text-[12px] text-gray-700 truncate">
-                      {accountDisplayName(row.accountName, row.accountHandle, row.platform)}
-                    </span>
-                  </span>
-                  <span className="text-center text-gray-800">
-                    <span className="text-[12px]">{formatNumber(row.reach)}</span>
-                    <span className="ml-1 text-[10px] text-green-600">↑ {formatPct(row.reachChangePct)}</span>
-                  </span>
-                  <span className="text-center text-gray-800">
-                    <span className="text-[12px]">{formatNumber(row.engagements)}</span>
-                    <span className="ml-1 text-[10px] text-green-600">↑ {formatPct(row.engagementsChangePct)}</span>
-                  </span>
-                  <span className="text-center text-[12px] text-gray-800">{formatNumber(row.queuedPosts)}</span>
-                  <span className="text-center text-[12px] text-gray-800">{formatNumber(row.queuedReels)}</span>
-                </div>
-                );
-              })
-            ) : (
-              <p className="px-4 py-6 text-sm text-gray-500">No SMM account rows available for this filter.</p>
             )}
           </div>
         </>

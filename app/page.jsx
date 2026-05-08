@@ -75,7 +75,7 @@ export default function Home() {
         );
       case "admin-approvals":
         return session?.user?.role === "super_admin" ? (
-          <AdminApprovalsSection />
+          <AdminApprovalsSection selectedSite={selectedSite} />
         ) : (
           <DashboardSection selectedSite={selectedSite} onNavigate={setActiveSection} />
         );
