@@ -47,12 +47,21 @@ model User {
 model Approval {
   id                    String    @id @default(cuid()) @db.VarChar(191)
   title                 String    @db.VarChar(255)
+  /// Assignee-visible heading when set (trimmed); otherwise `title` from admin is shown.
+  userEditedTitle       String?   @map("user_edited_title") @db.VarChar(255)
+  /// Optional post caption set by admin; assignee may edit into userEditedCaption.
+  caption               String    @default("") @db.VarChar(2000)
   bodyText              String    @map("body_text") @db.Text
   imagePath             String    @map("image_path") @db.VarChar(512)
   assigneeId            String    @map("assignee_id") @db.VarChar(191)
   createdById           String    @map("created_by_id") @db.VarChar(191)
   status                String    @default("pending") @db.VarChar(32)
   userEditedText        String?   @map("user_edited_text") @db.Text
+  userEditedCaption     String?   @map("user_edited_caption") @db.Text
+  /// Legacy DB column; kept empty for new rows. Assignee text is stored in `userEditedInstructions`.
+  instructions           String    @default("") @db.VarChar(5000)
+  /// Posting instructions / suggestions written by the assignee (not shown on admin create form).
+  userEditedInstructions String?   @map("user_edited_instructions") @db.Text
   respondedAt           DateTime? @map("responded_at")
   lastAction            String?   @map("last_action") @db.VarChar(32)
   awaitingAdminReview   Boolean   @default(false) @map("awaiting_admin_review")

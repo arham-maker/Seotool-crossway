@@ -26,6 +26,12 @@ function formatCardWhen(iso) {
   });
 }
 
+/** Heading shown on cards: assignee edit wins when set. */
+function assigneeApprovalTitle(a) {
+  if (a.userEditedTitle != null) return String(a.userEditedTitle).trim() || String(a.title || "").trim() || "Approval";
+  return String(a.title || "").trim() || "Approval";
+}
+
 /** Thumbnail inside black frame (approval card). */
 function MediaThumbnail({ mediaPath, title }) {
   return (
@@ -124,7 +130,7 @@ function ApprovalPreviewModal({ item, open, onClose }) {
         </button>
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-5 pt-14">
           <h2 id="approval-modal-title" className="pr-12 text-lg font-semibold text-white line-clamp-2 leading-snug">
-            {item.title}
+            {assigneeApprovalTitle(item)}
           </h2>
           {isVideo ? (
             <video
@@ -258,6 +264,7 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
           .map((a) => ({
             id: a.id,
             title: a.title,
+            userEditedTitle: a.userEditedTitle,
             imagePath: a.imagePath,
             status: a.status,
             createdAt: a.createdAt,
@@ -340,7 +347,8 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3 xl:grid-cols-4">
           {approvedItems.map((a) => {
             const displayWhen = a.respondedAt || a.updatedAt || a.createdAt;
-            const label = String(a.title || "Approval preview").trim() || "Open approval preview";
+            const label =
+              String(assigneeApprovalTitle(a) || "Approval preview").trim() || "Open approval preview";
             return (
               <div
                 key={a.id}
@@ -358,13 +366,15 @@ export default function SmmApprovalCardsGrid({ isSuperAdmin = false, activeSite 
               >
                 <header className="mb-5 flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <h3 className="line-clamp-2 text-lg font-bold leading-snug text-black sm:text-xl">{a.title}</h3>
+                    <h3 className="line-clamp-2 text-lg font-bold leading-snug text-black sm:text-xl">
+                      {assigneeApprovalTitle(a)}
+                    </h3>
                     <p className="mt-1 text-sm font-normal leading-normal text-[#666666]">
                       {formatCardWhen(displayWhen)}
                     </p>
                   </div>
                 </header>
-                <MediaThumbnail mediaPath={a.imagePath} title={a.title} />
+                <MediaThumbnail mediaPath={a.imagePath} title={assigneeApprovalTitle(a)} />
               </div>
             );
           })}

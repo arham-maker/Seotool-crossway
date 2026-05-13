@@ -3,6 +3,10 @@ import { Prisma } from "@prisma/client";
 import { authOptions } from "../auth/[...nextauth]/route";
 import prisma from "../../../lib/prisma";
 import { ROLES } from "../../../lib/rbac";
+import {
+  fetchCaptionMapByApprovalIds,
+  mergeCaptionFieldsIntoApprovals,
+} from "../../../lib/approvalCaptionMerge";
 
 export const runtime = "nodejs";
 
@@ -33,6 +37,11 @@ export async function GET(req) {
       select: {
         id: true,
         title: true,
+        userEditedTitle: true,
+        caption: true,
+        userEditedCaption: true,
+        instructions: true,
+        userEditedInstructions: true,
         bodyText: true,
         imagePath: true,
         status: true,
@@ -41,6 +50,8 @@ export async function GET(req) {
         lastAction: true,
         createdAt: true,
         updatedAt: true,
+        hiddenFromAssignee: true,
+        skippedAssigneeReview: true,
       },
     });
 
@@ -74,6 +85,12 @@ export async function GET(req) {
       }
       approvals = approvals.filter((a) => !skippedIds.has(a.id));
     }
+
+    const captionMap = await fetchCaptionMapByApprovalIds(
+      prisma,
+      approvals.map((a) => a.id)
+    );
+    approvals = mergeCaptionFieldsIntoApprovals(approvals, captionMap);
 
     return new Response(JSON.stringify({ approvals }), {
       status: 200,

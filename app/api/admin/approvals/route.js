@@ -5,6 +5,10 @@ import { Prisma } from "@prisma/client";
 import { requireSuperAdmin } from "../../../../lib/middleware/auth";
 import prisma from "../../../../lib/prisma";
 import { ROLES } from "../../../../lib/rbac";
+import {
+  fetchCaptionMapByApprovalIds,
+  mergeCaptionFieldsIntoApprovals,
+} from "../../../../lib/approvalCaptionMerge";
 
 export const runtime = "nodejs";
 
@@ -71,7 +75,13 @@ export async function GET(req) {
       },
     });
 
-    return new Response(JSON.stringify({ approvals: rows }), {
+    const captionMap = await fetchCaptionMapByApprovalIds(
+      prisma,
+      rows.map((r) => r.id)
+    );
+    const approvals = mergeCaptionFieldsIntoApprovals(rows, captionMap);
+
+    return new Response(JSON.stringify({ approvals }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -97,6 +107,10 @@ export async function POST(req) {
     const form = await req.formData();
     const image = form.get("image");
     const title = String(form.get("title") || "").trim();
+    const captionRaw = String(form.get("caption") ?? "");
+    const caption = captionRaw.trim();
+    /** Posting instructions are assignee-only; new rows keep this column empty. */
+    const instructions = "";
     const selectedSite = String(form.get("selectedSite") || "").trim();
     const approveOnAssignmentRaw = form.get("approveOnAssignment");
     const approveOnAssignment =
@@ -110,6 +124,13 @@ export async function POST(req) {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (caption.length > 2000) {
+      return new Response(JSON.stringify({ error: "Caption must be 2000 characters or fewer." }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     if (!selectedSite) {
       return new Response(JSON.stringify({ error: "Selected site is required." }), {
         status: 400,
@@ -241,6 +262,27 @@ export async function POST(req) {
       },
     });
 
+    try {
+      await prisma.$executeRaw(
+        Prisma.sql`UPDATE approvals SET caption = ${caption}, instructions = ${instructions} WHERE id = ${approval.id}`
+      );
+    } catch {
+      try {
+        await prisma.$executeRaw(
+          Prisma.sql`UPDATE approvals SET caption = ${caption} WHERE id = ${approval.id}`
+        );
+      } catch {
+        // caption column missing
+      }
+      try {
+        await prisma.$executeRaw(
+          Prisma.sql`UPDATE approvals SET instructions = ${instructions} WHERE id = ${approval.id}`
+        );
+      } catch {
+        // instructions column missing
+      }
+    }
+
     if (approveOnAssignment) {
       try {
         await prisma.$executeRaw(
@@ -251,7 +293,7 @@ export async function POST(req) {
       }
     }
 
-    const approvalOut = { ...approval, skippedAssigneeReview: approveOnAssignment };
+    const approvalOut = { ...approval, caption, instructions, skippedAssigneeReview: approveOnAssignment };
 
     return new Response(JSON.stringify({ approval: approvalOut }), {
       status: 201,

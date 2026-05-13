@@ -28,6 +28,33 @@ function formatDateTime(iso) {
   }
 }
 
+/** Read-only multiline mirror (admin review): shows full text; scrolls when long. */
+function AdminReadonlyMultiline({ id, label, value, rows = 3, variant = "default" }) {
+  const str = value != null ? String(value) : "";
+  const box =
+    variant === "user"
+      ? "border-amber-200 bg-amber-50/70"
+      : variant === "suggestions"
+        ? "border-gray-200 bg-white"
+        : "border-gray-200 bg-gray-50";
+  return (
+    <div className="min-w-0 flex flex-col gap-1">
+      <label htmlFor={id} className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+        {label}
+      </label>
+      <textarea
+        id={id}
+        readOnly
+        spellCheck={false}
+        rows={rows}
+        value={str}
+        placeholder="—"
+        className={`w-full rounded-lg border px-3 py-2 text-sm text-gray-900 min-h-[2.75rem] max-h-[min(24rem,50vh)] resize-y overflow-y-auto cursor-default focus:outline-none focus-visible:ring-1 focus-visible:ring-gray-300 whitespace-pre-wrap break-words ${box}`}
+      />
+    </div>
+  );
+}
+
 function userResponseSummary(a) {
   if (!a.respondedAt && a.status === "pending") {
     return { label: "Awaiting user", detail: "No response yet." };
@@ -43,7 +70,14 @@ function userResponseSummary(a) {
     }
     return {
       label: "Approved",
-      detail: `User approved${a.userEditedText ? " (after submitting edited text)" : ""} on ${when}.`,
+      detail: `User approved${
+        a.userEditedText ||
+        a.userEditedCaption != null ||
+        a.userEditedInstructions != null ||
+        a.userEditedTitle != null
+          ? " (after submitting edits)"
+          : ""
+      } on ${when}.`,
     };
   }
   if (action === "decline" || a.status === "declined") {
@@ -54,8 +88,8 @@ function userResponseSummary(a) {
   }
   if (action === "edit" || a.status === "edited") {
     return {
-      label: "Edited text",
-      detail: `User submitted revised text on ${when}. Compare below.`,
+      label: "Edited",
+      detail: `User submitted edits on ${when}. Compare below.`,
     };
   }
   return {
@@ -73,6 +107,7 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
   const [approvalsListWarning, setApprovalsListWarning] = useState("");
   const [form, setForm] = useState({
     title: "",
+    caption: "",
     imageFile: null,
     /** If true, record as approved on create (assignee does not need to act). */
     approveOnAssignment: false,
@@ -198,6 +233,7 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
       const fd = new FormData();
       fd.append("image", form.imageFile);
       fd.append("title", form.title.trim());
+      fd.append("caption", form.caption.trim());
       fd.append("selectedSite", selectedSite);
       fd.append("approveOnAssignment", wasApproveOnAssignment ? "1" : "0");
       const res = await fetch("/api/admin/approvals", { method: "POST", body: fd });
@@ -208,7 +244,7 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
           ? "Approval created and recorded as approved (assignee does not need to review)."
           : "Approval created and assigned."
       );
-      setForm({ title: "", imageFile: null, approveOnAssignment: false });
+      setForm({ title: "", caption: "", imageFile: null, approveOnAssignment: false });
       if (approvalImageInputRef.current) approvalImageInputRef.current.value = "";
       await load();
       if (typeof window !== "undefined") {
@@ -269,6 +305,18 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
             />
           </div>
           <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Caption</label>
+            <textarea
+              rows={3}
+              maxLength={2000}
+              value={form.caption}
+              onChange={(e) => setForm((f) => ({ ...f, caption: e.target.value }))}
+              className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-white text-gray-900 text-sm"
+              placeholder="Optional caption shown to the assignee (they can edit it)"
+            />
+            <p className="text-xs text-gray-500 mt-1">Max 2000 characters. {form.caption.length}/2000</p>
+          </div>
+          <div>
             <span className="block text-sm font-semibold text-gray-700 mb-2">Image or video</span>
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -323,12 +371,12 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
               className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-400"
             />
             <span>
-              <span className="block text-sm font-semibold text-gray-900">No Requires Client Approval</span>
+              <span className="block text-sm font-semibold text-gray-900">Not Require Client Approval</span>
               <span className="block text-xs text-gray-600 mt-0.5">
               </span>
             </span>
           </label>
-          <div>
+          <div className="hidden">
             <label className="block text-sm font-semibold text-gray-700 mb-2">Assignment source</label>
             <div className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-white text-sm text-gray-900">
               {selectedSite ? (
@@ -374,8 +422,16 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
               {approvals.map((a) => {
                 const expanded = expandedApprovalId === a.id;
                 const summary = userResponseSummary(a);
+                const capTrim = (s) => String(s ?? "").trim();
+                const hasUserCaptionEdit =
+                  a.userEditedCaption != null && capTrim(a.userEditedCaption) !== capTrim(a.caption);
+                const hasUserTitleEdit =
+                  a.userEditedTitle != null && capTrim(a.userEditedTitle) !== capTrim(a.title);
                 const hasUserEdit =
                   Boolean(a.userEditedText && String(a.userEditedText).trim()) ||
+                  hasUserCaptionEdit ||
+                  hasUserTitleEdit ||
+                  a.userEditedInstructions != null ||
                   a.status === "edited" ||
                   a.lastAction === "edit";
                 const showTextCompare =
@@ -395,7 +451,9 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
                           <span className="truncate">{a.assignee?.name || a.assignee?.email}</span>
                         </div>
                         <div className="text-gray-600 truncate mt-0.5 flex items-center gap-2 flex-wrap">
-                          <span className="truncate">{a.title}</span>
+                          <span className="truncate">
+                            {hasUserTitleEdit ? capTrim(a.userEditedTitle) || a.title : a.title}
+                          </span>
                           {a.hiddenFromAssignee ? (
                             <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-gray-300 bg-gray-100 text-gray-600">
                               Hidden
@@ -526,13 +584,44 @@ export default function AdminApprovalsSection({ selectedSite = "" }) {
                               />
                             </div>
                           </div>
-                          <div className="space-y-4 min-w-0">
-                            <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">
-                                Heading
-                              </p>
-                              <p className="text-sm font-medium text-gray-900">{a.title}</p>
+                            <div className="space-y-4 min-w-0">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <AdminReadonlyMultiline
+                                id={`approval-heading-admin-${a.id}`}
+                                label="Heading"
+                                value={a.title}
+                                rows={2}
+                              />
+                              <AdminReadonlyMultiline
+                                id={`approval-heading-user-${a.id}`}
+                                label="User's edited heading"
+                                value={a.userEditedTitle != null ? String(a.userEditedTitle) : ""}
+                                rows={2}
+                                variant="user"
+                              />
                             </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <AdminReadonlyMultiline
+                                id={`approval-caption-admin-${a.id}`}
+                                label="Caption"
+                                value={String(a.caption ?? "")}
+                                rows={4}
+                              />
+                              <AdminReadonlyMultiline
+                                id={`approval-caption-user-${a.id}`}
+                                label="User's edited caption"
+                                value={a.userEditedCaption != null ? String(a.userEditedCaption) : ""}
+                                rows={4}
+                                variant="user"
+                              />
+                            </div>
+                            <AdminReadonlyMultiline
+                              id={`approval-suggestions-${a.id}`}
+                              label="Suggestions"
+                              value={a.userEditedInstructions != null ? String(a.userEditedInstructions) : ""}
+                              rows={8}
+                              variant="suggestions"
+                            />
                             {showTextCompare ? (
                               <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="rounded-lg border border-gray-200 bg-white p-3 min-w-0">

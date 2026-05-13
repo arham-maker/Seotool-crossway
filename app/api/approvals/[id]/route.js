@@ -2,12 +2,20 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
 import prisma from "../../../../lib/prisma";
 import { ROLES } from "../../../../lib/rbac";
+import {
+  fetchCaptionMapByApprovalIds,
+  mergeCaptionFieldsIntoApprovals,
+} from "../../../../lib/approvalCaptionMerge";
 
 export const runtime = "nodejs";
 
 const OPEN_STATUSES = new Set(["pending", "edited"]);
+const TEXT_MAX = 20000;
+const CAPTION_MAX = 2000;
+const INSTRUCTIONS_MAX = 5000;
+const TITLE_MAX = 255;
 
-/** PATCH — assignee: approve | decline | edit (text only; image unchanged). approve may send editedText to persist caption in one step. */
+/** PATCH — assignee: approve | decline | edit (heading, caption, instructions, accompanying text; media unchanged). */
 export async function PATCH(req, { params }) {
   try {
     const session = await getServerSession(authOptions);
@@ -61,13 +69,43 @@ export async function PATCH(req, { params }) {
       };
       if (body.editedText !== undefined) {
         const editedTextForApprove = String(body.editedText ?? "").trim();
-        if (editedTextForApprove.length > 20000) {
-          return new Response(JSON.stringify({ error: "Edited text is too long (max 20000 characters)." }), {
+        if (editedTextForApprove.length > TEXT_MAX) {
+          return new Response(JSON.stringify({ error: "Accompanying text is too long (max 20000 characters)." }), {
             status: 400,
             headers: { "Content-Type": "application/json" },
           });
         }
         approveData.userEditedText = editedTextForApprove || null;
+      }
+      if (body.editedCaption !== undefined) {
+        const editedCap = String(body.editedCaption ?? "").trim();
+        if (editedCap.length > CAPTION_MAX) {
+          return new Response(JSON.stringify({ error: "Caption is too long (max 2000 characters)." }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        approveData.userEditedCaption = editedCap || null;
+      }
+      if (body.editedTitle !== undefined) {
+        const editedTitle = String(body.editedTitle ?? "").trim();
+        if (editedTitle.length > TITLE_MAX) {
+          return new Response(JSON.stringify({ error: "Heading is too long (max 255 characters)." }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        approveData.userEditedTitle = editedTitle || null;
+      }
+      if (body.editedInstructions !== undefined) {
+        const editedIns = String(body.editedInstructions ?? "").trim();
+        if (editedIns.length > INSTRUCTIONS_MAX) {
+          return new Response(
+            JSON.stringify({ error: "Instructions / suggestions are too long (max 5000 characters)." }),
+            { status: 400, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        approveData.userEditedInstructions = editedIns || null;
       }
       await prisma.approval.update({
         where: { id },
@@ -85,27 +123,62 @@ export async function PATCH(req, { params }) {
       });
     } else if (action === "edit") {
       const editedText = String(body.editedText ?? "").trim();
-      if (!editedText) {
-        return new Response(JSON.stringify({ error: "editedText is required for edit action." }), {
+      const editedCaption = String(body.editedCaption ?? "").trim();
+      const editedInstructions = String(body.editedInstructions ?? "").trim();
+      const editedTitle = String(body.editedTitle ?? "").trim();
+      if (editedTitle.length > TITLE_MAX) {
+        return new Response(JSON.stringify({ error: "Heading is too long (max 255 characters)." }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         });
       }
-      if (editedText.length > 20000) {
-        return new Response(JSON.stringify({ error: "Edited text is too long (max 20000 characters)." }), {
+      const prevTitle =
+        approval.userEditedTitle != null
+          ? String(approval.userEditedTitle).trim()
+          : String(approval.title || "").trim();
+      const titleChanged = editedTitle !== prevTitle;
+      if (!editedText && !editedCaption && !editedInstructions && !titleChanged) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Change the heading, caption, instructions, and/or accompanying text before saving your edit.",
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (editedText.length > TEXT_MAX) {
+        return new Response(JSON.stringify({ error: "Accompanying text is too long (max 20000 characters)." }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (editedCaption.length > CAPTION_MAX) {
+        return new Response(JSON.stringify({ error: "Caption is too long (max 2000 characters)." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (editedInstructions.length > INSTRUCTIONS_MAX) {
+        return new Response(
+          JSON.stringify({ error: "Instructions / suggestions are too long (max 5000 characters)." }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      const editData = {
+        status: "edited",
+        userEditedText: editedText || null,
+        userEditedCaption: editedCaption || null,
+        userEditedInstructions: editedInstructions || null,
+        lastAction: "edit",
+        respondedAt: now,
+        awaitingAdminReview: true,
+      };
+      if (titleChanged) {
+        editData.userEditedTitle = editedTitle || null;
       }
       await prisma.approval.update({
         where: { id },
-        data: {
-          status: "edited",
-          userEditedText: editedText,
-          lastAction: "edit",
-          respondedAt: now,
-          awaitingAdminReview: true,
-        },
+        data: editData,
       });
     } else {
       return new Response(JSON.stringify({ error: "Invalid action. Use approve, decline, or edit." }), {
@@ -119,6 +192,11 @@ export async function PATCH(req, { params }) {
       select: {
         id: true,
         title: true,
+        userEditedTitle: true,
+        caption: true,
+        userEditedCaption: true,
+        instructions: true,
+        userEditedInstructions: true,
         bodyText: true,
         imagePath: true,
         status: true,
@@ -130,7 +208,17 @@ export async function PATCH(req, { params }) {
       },
     });
 
-    return new Response(JSON.stringify({ approval: updated }), {
+    if (!updated) {
+      return new Response(JSON.stringify({ error: "Approval not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const capMap = await fetchCaptionMapByApprovalIds(prisma, [id]);
+    const [withCaptions] = mergeCaptionFieldsIntoApprovals([updated], capMap);
+
+    return new Response(JSON.stringify({ approval: withCaptions }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
