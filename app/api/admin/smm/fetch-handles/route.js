@@ -189,43 +189,21 @@ function resolvePlatformInput(platform, rawInput) {
           identifier: handle,
           profileUrl: raw.startsWith("http") ? raw : `https://www.tiktok.com/@${encodeURIComponent(handle)}`,
           normalizedHandle: handle,
-          xUserId: null,
-          tiktokUrlOnly: true,
         };
       }
     }
     if (isUrl && (host.includes("x.com") || host.includes("twitter.com"))) {
-      const userIdFromQuery = (parsed.searchParams.get("user_id") || "").trim();
-      const userIdFromPath =
-        parts[0] === "i" && parts[1] === "user" && /^\d+$/.test(parts[2] || "") ? parts[2] : "";
-      const userId = userIdFromQuery || userIdFromPath;
-      const handle = (parts[0] && parts[0] !== "i" ? parts[0] : "").replace(/^@/, "");
       return {
-        identifier: handle || userId,
-        profileUrl: handle
-          ? `https://x.com/${encodeURIComponent(handle)}`
-          : userId
-            ? `https://x.com/i/user/${encodeURIComponent(userId)}`
-            : raw,
-        normalizedHandle: handle,
-        xUserId: userId || null,
+        identifier: "",
+        unsupported: "X (Twitter) is not supported. Use a TikTok @handle or https://www.tiktok.com/@user URL.",
       };
     }
     const rawValue = String(raw || "").trim();
-    if (/^\d{5,25}$/.test(rawValue)) {
-      return {
-        identifier: rawValue,
-        profileUrl: `https://x.com/i/user/${encodeURIComponent(rawValue)}`,
-        normalizedHandle: "",
-        xUserId: rawValue,
-      };
-    }
     const handle = extractHandle(rawValue);
     return {
       identifier: handle,
-      profileUrl: `https://x.com/${encodeURIComponent(handle)}`,
+      profileUrl: `https://www.tiktok.com/@${encodeURIComponent(handle)}`,
       normalizedHandle: handle,
-      xUserId: null,
     };
   }
 
@@ -276,6 +254,14 @@ async function fetchTextWithFallback(urls, extraHeaders = {}) {
 
 function youtubeResultFromChannelItem(item, displayHandle) {
   if (!item) return null;
+  const hidden = Boolean(item?.statistics?.hiddenSubscriberCount);
+  const count = Number(item?.statistics?.subscriberCount || 0);
+  if (hidden && count === 0) {
+    return {
+      error:
+        "YouTube hides subscriber count for this channel (API returns 0). Open the channel in YouTube to confirm, or enter followers manually.",
+    };
+  }
   const handle =
     displayHandle ||
     item?.snippet?.customUrl?.replace(/^@/, "") ||
@@ -285,7 +271,7 @@ function youtubeResultFromChannelItem(item, displayHandle) {
     platform: "youtube",
     accountName: item?.snippet?.title || "YouTube",
     accountHandle: handle.startsWith("@") ? handle : `@${String(handle).replace(/^@/, "")}`,
-    followers: Number(item?.statistics?.subscriberCount || 0),
+    followers: count,
   };
 }
 
@@ -315,7 +301,9 @@ async function fetchYoutubeChannelById(channelId, apiKey) {
   if (!item) {
     return { ok: false, reason: `No YouTube channel found for ID ${channelId}.` };
   }
-  return { ok: true, data: youtubeResultFromChannelItem(item, channelId) };
+  const mapped = youtubeResultFromChannelItem(item, channelId);
+  if (mapped?.error) return { ok: false, reason: mapped.error };
+  return { ok: true, data: mapped };
 }
 
 async function fetchYoutubeSubscribers(input, apiKey) {
@@ -349,7 +337,9 @@ async function fetchYoutubeSubscribers(input, apiKey) {
   }
   const forHandleItem = forHandleData?.items?.[0];
   if (forHandleItem) {
-    return { ok: true, data: youtubeResultFromChannelItem(forHandleItem, handle) };
+    const mapped = youtubeResultFromChannelItem(forHandleItem, handle);
+    if (mapped?.error) return { ok: false, reason: mapped.error };
+    if (mapped) return { ok: true, data: mapped };
   }
 
   const q = encodeURIComponent(`@${handle}`);
@@ -489,77 +479,205 @@ async function fetchFacebookFollowers(input) {
   };
 }
 
-/** Normalize token from .env (trim quotes, strip accidental "Bearer " prefix, fix paste issues). */
-function normalizeXBearerToken(raw) {
-  let s = String(raw || "").trim().replace(/^["']|["']$/g, "");
-  s = s.replace(/^Bearer\s+/i, "");
-  // Line breaks / spaces from copy-paste break the token
-  s = s.replace(/\s+/g, "");
-  if (!s) return "";
-  try {
-    if (/%[0-9A-Fa-f]{2}/.test(s)) s = decodeURIComponent(s);
-  } catch {
-    // keep original
+async function fetchInstagramGraphById(igUserId, token, displayHandle) {
+  const igRes = await fetch(
+    `https://graph.facebook.com/v20.0/${encodeURIComponent(
+      String(igUserId).trim()
+    )}?fields=username,followers_count,name&access_token=${encodeURIComponent(token)}`
+  );
+  const igData = await igRes.json();
+  if (igData?.error?.message) {
+    return { ok: false, reason: formatMetaAccessTokenHint(igData.error.message) };
   }
-  return s;
+  if (igRes.ok && (igData?.username != null || igData?.id != null)) {
+    const count = Number(igData?.followers_count ?? 0);
+    const username = igData?.username || displayHandle || "instagram";
+    return {
+      ok: true,
+      data: {
+        platform: "instagram",
+        accountName: igData?.name || username,
+        accountHandle: `@${String(username).replace(/^@/, "")}`,
+        followers: count,
+      },
+    };
+  }
+  return { ok: false, reason: "Instagram Graph returned no user for this ID." };
 }
 
-function extractXApiError(data, status) {
-  const e0 = Array.isArray(data?.errors) ? data.errors[0] : null;
-  if (e0?.detail) return String(e0.detail);
-  if (e0?.message) return String(e0.message);
-  if (typeof data?.detail === "string") return data.detail;
-  if (typeof data?.title === "string" && data.title !== "Error") return data.title;
-  if (typeof data?.error === "string") return data.error;
-  return `HTTP ${status}`;
+async function getPageLinkedInstagramAccount(pageId, token) {
+  const res = await fetch(
+    `https://graph.facebook.com/v20.0/${encodeURIComponent(
+      String(pageId).trim()
+    )}?fields=instagram_business_account{id,username}&access_token=${encodeURIComponent(token)}`
+  );
+  const data = await res.json();
+  if (data?.error?.message) {
+    return { ok: false, reason: formatMetaAccessTokenHint(data.error.message) };
+  }
+  const ig = data?.instagram_business_account;
+  if (!ig?.id) {
+    return {
+      ok: false,
+      reason:
+        "No Instagram Business account linked to this Facebook Page. Connect IG to the Page in Meta Business Suite, then retry.",
+    };
+  }
+  return { ok: true, id: String(ig.id), username: String(ig.username || "").replace(/^@/, "") };
 }
 
-/**
- * @returns {Promise<{ ok: true, data: object } | { ok: false, reason: string }>}
- */
-async function fetchXUserByPath(path, token) {
-  let lastNotFound = "";
-  for (const base of ["https://api.x.com", "https://api.twitter.com"]) {
-    try {
-      const res = await fetch(`${base}${path}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (res.ok && data?.data) {
-        return { ok: true, data: data.data };
+async function fetchInstagramBusinessDiscovery(igBusinessAccountId, username, token) {
+  const user = String(username || "")
+    .replace(/^@/, "")
+    .trim();
+  if (!user) return { ok: false, reason: "Instagram username missing." };
+
+  const fields = `business_discovery.username(${user}){username,followers_count,name}`;
+  const res = await fetch(
+    `https://graph.facebook.com/v20.0/${encodeURIComponent(
+      igBusinessAccountId
+    )}?fields=${fields}&access_token=${encodeURIComponent(token)}`
+  );
+  const data = await res.json();
+  if (data?.error?.message) {
+    const msg = formatMetaAccessTokenHint(data.error.message);
+    const hint = /business_discovery|permission|capability/i.test(msg)
+      ? " Token needs instagram_basic and instagram_manage_insights; the Page’s linked IG account must be Business/Creator."
+      : "";
+    return { ok: false, reason: `${msg}${hint}` };
+  }
+  const discovered = data?.business_discovery;
+  if (!discovered?.username) {
+    return {
+      ok: false,
+      reason: `Instagram business_discovery found no public data for @${user}.`,
+    };
+  }
+  return {
+    ok: true,
+    data: {
+      platform: "instagram",
+      accountName: discovered?.name || discovered.username,
+      accountHandle: `@${discovered.username}`,
+      followers: Number(discovered?.followers_count ?? 0),
+    },
+  };
+}
+
+async function fetchInstagramViaPageScrape(handle, profileUrl) {
+  const h = String(handle || "")
+    .replace(/^@/, "")
+    .trim();
+  if (!h) return { ok: false, reason: "Instagram handle missing." };
+
+  const urls = Array.from(
+    new Set(
+      [
+        profileUrl,
+        `https://www.instagram.com/${encodeURIComponent(h)}/`,
+        `https://r.jina.ai/https://www.instagram.com/${encodeURIComponent(h)}/`,
+      ].filter(Boolean)
+    )
+  );
+
+  try {
+    const { text: html } = await fetchTextWithFallback(urls);
+    const jsonMetric =
+      html.match(/"edge_followed_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)/i) ||
+      html.match(/"follower_count"\s*:\s*(\d+)/i) ||
+      html.match(/"followers_count"\s*:\s*(\d+)/i);
+    const textMetric = html.match(/([\d,.]+(?:[KMB])?)\s+followers/i);
+    const parsed = jsonMetric
+      ? Number(jsonMetric[1] || 0)
+      : textMetric
+        ? parseAbbrevNumber(textMetric[1])
+        : 0;
+    if (parsed > 0) {
+      return {
+        ok: true,
+        data: {
+          platform: "instagram",
+          accountName: "Instagram",
+          accountHandle: `@${h}`,
+          followers: parsed,
+        },
+      };
+    }
+    return { ok: false, reason: "Could not read follower count from the Instagram profile page." };
+  } catch (err) {
+    return { ok: false, reason: err.message || "Instagram page fetch failed." };
+  }
+}
+
+async function fetchInstagramFollowers(input, ctx) {
+  const token = String(ctx?.token || "").trim();
+  const handle = String(input?.normalizedHandle || extractHandle(input?.identifier) || "")
+    .replace(/^@/, "")
+    .trim();
+  const igUserId = String(ctx?.instagramUserId || "").trim();
+  const facebookPageId = String(ctx?.facebookPageId || "").trim();
+  const reasons = [];
+
+  if (!token) {
+    return {
+      ok: false,
+      reason: "Missing META_PAGE_ACCESS_TOKEN (or META_APP_ACCESS_TOKEN).",
+    };
+  }
+
+  if (igUserId) {
+    const direct = await fetchInstagramGraphById(igUserId, token, handle);
+    if (direct.ok) return direct;
+    reasons.push(`By stored IG User ID: ${direct.reason}`);
+  }
+
+  if (handle && /^\d{10,25}$/.test(handle)) {
+    const byHandleId = await fetchInstagramGraphById(handle, token, handle);
+    if (byHandleId.ok) return byHandleId;
+    reasons.push(`By numeric handle: ${byHandleId.reason}`);
+  }
+
+  let igBusinessAccountId = igUserId;
+  if (facebookPageId) {
+    const linked = await getPageLinkedInstagramAccount(facebookPageId, token);
+    if (linked.ok) {
+      igBusinessAccountId = linked.id;
+      if (
+        handle &&
+        linked.username &&
+        handle.toLowerCase() === linked.username.toLowerCase()
+      ) {
+        const own = await fetchInstagramGraphById(linked.id, token, handle);
+        if (own.ok) return own;
+        reasons.push(`Linked IG account: ${own.reason}`);
       }
-      const msg = extractXApiError(data, res.status);
-      if (res.status === 401) {
-        return {
-          ok: false,
-          fatal: true,
-          reason: `Twitter API unauthorized (401): ${msg}. Use the OAuth 2.0 Bearer Token from the Twitter developer portal → your app → Keys and Tokens (not Consumer Key/Secret). Paste only the token, no "Bearer " prefix. Regenerate the token if it was exposed. Save .env.local and restart npm run dev.`,
-        };
-      }
-      if (res.status === 403) {
-        return {
-          ok: false,
-          fatal: true,
-          reason: `Twitter API forbidden (403): ${msg}. Ensure your app has users.read (and appropriate access tier) for user lookup.`,
-        };
-      }
-      if (res.status === 429) {
-        return {
-          ok: false,
-          fatal: true,
-          reason: `Twitter API rate limited (429): ${msg}. Try again in a few minutes.`,
-        };
-      }
-      if (res.status === 404) {
-        lastNotFound = msg || "User not found.";
-        continue;
-      }
-      lastNotFound = msg;
-    } catch (err) {
-      lastNotFound = err?.message || String(err);
+    } else {
+      reasons.push(`Page → IG link: ${linked.reason}`);
     }
   }
-  return { ok: false, reason: lastNotFound || "Twitter API request failed." };
+
+  if (igBusinessAccountId && handle && !/^\d{10,25}$/.test(handle)) {
+    const discovery = await fetchInstagramBusinessDiscovery(
+      igBusinessAccountId,
+      handle,
+      token
+    );
+    if (discovery.ok) return discovery;
+    reasons.push(`business_discovery: ${discovery.reason}`);
+  }
+
+  if (handle) {
+    const scrape = await fetchInstagramViaPageScrape(handle, input.profileUrl);
+    if (scrape.ok) return scrape;
+    reasons.push(`Page scrape: ${scrape.reason}`);
+  }
+
+  return {
+    ok: false,
+    reason:
+      reasons.filter(Boolean).join(" — ") ||
+      "Instagram: add Facebook Page ID (with linked IG Business account) or numeric Instagram User ID in User Management → Edit user.",
+  };
 }
 
 async function fetchTikTokViaPageScrape(handle, profileUrl) {
@@ -610,16 +728,26 @@ async function fetchTikTokViaPageScrape(handle, profileUrl) {
   }
 }
 
-/** TikTok @handle or tiktok.com URL — Research API, page scrape, then optional X API fallback. */
+/** TikTok @handle or tiktok.com URL — Research API + page scrape. */
 async function fetchTiktokFollowers(input) {
-  const { identifier, profileUrl, normalizedHandle, xUserId, tiktokUrlOnly } = input;
+  const { profileUrl, normalizedHandle, identifier } = input;
   const handle = String(normalizedHandle || identifier || "")
     .replace(/^@/, "")
     .trim();
+  if (!handle) {
+    return { ok: false, reason: "Enter a TikTok @handle or https://www.tiktok.com/@user profile URL." };
+  }
+
+  const tiktokProfileUrl =
+    profileUrl && /tiktok\.com/i.test(profileUrl)
+      ? profileUrl
+      : `https://www.tiktok.com/@${encodeURIComponent(handle)}`;
 
   const clientKey = process.env.TIKTOK_CLIENT_KEY || "";
   const clientSecret = process.env.TIKTOK_CLIENT_SECRET || "";
-  if (clientKey && clientSecret && handle) {
+  const reasons = [];
+
+  if (clientKey && clientSecret) {
     const tokenResult = await getTikTokClientAccessToken(clientKey, clientSecret);
     if (!tokenResult.ok) {
       return tokenResult;
@@ -628,126 +756,20 @@ async function fetchTiktokFollowers(input) {
     if (research.ok) {
       return research;
     }
-    if (tiktokUrlOnly) {
-      const scrape = await fetchTikTokViaPageScrape(handle, profileUrl);
-      if (scrape.ok) return scrape;
-      return {
-        ok: false,
-        reason: `${research.reason} Page scrape fallback: ${scrape.reason || "failed"}.`,
-      };
-    }
-  } else if (tiktokUrlOnly && handle) {
-    const scrape = await fetchTikTokViaPageScrape(handle, profileUrl);
-    if (scrape.ok) return scrape;
-    if (!clientKey || !clientSecret) {
-      return {
-        ok: false,
-        reason:
-          "Add TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET to .env.local (from developers.tiktok.com). Research API access is required for reliable TikTok follower counts; without keys we only attempt a best-effort page read.",
-      };
-    }
-  }
-
-  return fetchXFollowers(input);
-}
-
-async function fetchXFollowers(input) {
-  const { identifier, profileUrl, normalizedHandle, xUserId } = input;
-  const token = normalizeXBearerToken(process.env.X_BEARER_TOKEN || "");
-
-  if (!token) {
-    return {
-      ok: false,
-      reason:
-        "Missing X_BEARER_TOKEN (Twitter bearer token). Add it to .env.local (not only .env), then restart npm run dev.",
-    };
-  }
-
-  const idStr = String(identifier || "").trim();
-  const numericId = /^\d{5,25}$/.test(idStr) ? idStr : xUserId ? String(xUserId).trim() : "";
-
-  const paths = [];
-  if (numericId) {
-    paths.push(`/2/users/${encodeURIComponent(numericId)}?user.fields=public_metrics,name,username`);
-  }
-  if (idStr && !/^\d{5,25}$/.test(idStr)) {
-    paths.push(`/2/users/by/username/${encodeURIComponent(idStr.replace(/^@/, ""))}?user.fields=public_metrics,name,username`);
-  }
-
-  if (!paths.length) {
-    return {
-      ok: false,
-      reason: "Enter a @handle, Twitter profile URL, or numeric user ID.",
-    };
-  }
-
-  let apiFailureReason = "";
-
-  for (const path of paths) {
-    const result = await fetchXUserByPath(path, token);
-    if (result.ok && result.data) {
-      const user = result.data;
-      const count = Number(user?.public_metrics?.followers_count ?? 0);
-      const handle =
-        user?.username || normalizedHandle || idStr.replace(/^@/, "") || "tiktok";
-      return {
-        ok: true,
-        data: {
-          platform: "tiktok",
-          accountName: user?.name || "TikTok",
-          accountHandle: `@${handle}`,
-          followers: count,
-        },
-      };
-    }
-    if (result.fatal) {
-      return { ok: false, reason: result.reason };
-    }
-    apiFailureReason = result.reason || apiFailureReason;
-  }
-
-  let htmlErr = "";
-  try {
-    const htmlCandidates = Array.from(
-      new Set(
-        [
-          profileUrl,
-          profileUrl?.replace("https://x.com/", "https://twitter.com/"),
-          profileUrl ? `https://r.jina.ai/http://${profileUrl.replace(/^https?:\/\//, "")}` : "",
-        ].filter(Boolean)
-      )
+    reasons.push(research.reason || "TikTok Research API failed.");
+  } else {
+    reasons.push(
+      "TIKTOK_CLIENT_KEY/SECRET not set — using page scrape only (add keys from developers.tiktok.com for Research API)."
     );
-    if (htmlCandidates.length) {
-      const { text: html } = await fetchTextWithFallback(htmlCandidates);
-      const jsonMetric = html.match(/"followers_count"\s*:\s*(\d+)/);
-      const textMetric = html.match(/([\d,.]+(?:[KMB])?)\s+Followers/i);
-      const parsed = jsonMetric
-        ? Number(jsonMetric[1] || 0)
-        : parseAbbrevNumber(textMetric?.[1] || 0);
-      if (parsed > 0) {
-        const h = normalizedHandle || idStr.replace(/^@/, "") || "tiktok";
-        return {
-          ok: true,
-          data: {
-            platform: "tiktok",
-            accountName: "TikTok",
-            accountHandle: `@${h}`,
-            followers: parsed,
-          },
-        };
-      }
-    }
-  } catch (err) {
-    htmlErr = err?.message || String(err);
   }
 
-  const parts = [apiFailureReason && `Twitter API: ${apiFailureReason}`];
-  if (htmlErr) parts.push(`Page fallback: ${htmlErr}`);
+  const scrape = await fetchTikTokViaPageScrape(handle, tiktokProfileUrl);
+  if (scrape.ok) return scrape;
+  reasons.push(scrape.reason || "TikTok page scrape failed.");
+
   return {
     ok: false,
-    reason:
-      parts.filter(Boolean).join(" ") ||
-      "Unable to resolve followers for this TikTok row. Verify the handle exists and your Twitter developer app has access to user lookup.",
+    reason: reasons.filter(Boolean).join(" "),
   };
 }
 
@@ -789,6 +811,10 @@ export async function POST(req) {
     }
 
     const youtubeApiKey = process.env.YOUTUBE_API_KEY || process.env.PAGESPEED_API_KEY || "";
+    const metaToken =
+      process.env.META_PAGE_ACCESS_TOKEN || process.env.META_APP_ACCESS_TOKEN || "";
+    const fbPageIdResolved = String(facebookPageId || user.facebookPageId || "").trim();
+    const igUserIdResolved = String(instagramUserId || user.instagramUserId || "").trim();
     const resolved = [];
     const skipped = [];
 
@@ -803,6 +829,14 @@ export async function POST(req) {
         continue;
       }
       const input = resolvePlatformInput(platform, row.accountHandle);
+      if (input.unsupported) {
+        skipped.push({
+          platform,
+          accountHandle: row.accountHandle,
+          reason: input.unsupported,
+        });
+        continue;
+      }
       if (!input.identifier) continue;
 
       if (platform === "youtube") {
@@ -834,9 +868,8 @@ export async function POST(req) {
         }
       } else if (platform === "facebook") {
         try {
-          if (facebookPageId) {
-            const token = process.env.META_PAGE_ACCESS_TOKEN || process.env.META_APP_ACCESS_TOKEN || "";
-            if (!token) {
+          if (fbPageIdResolved) {
+            if (!metaToken) {
               skipped.push({
                 platform,
                 accountHandle: row.accountHandle,
@@ -846,8 +879,8 @@ export async function POST(req) {
             }
             const pageRes = await fetch(
               `https://graph.facebook.com/v20.0/${encodeURIComponent(
-                String(facebookPageId).trim()
-              )}?fields=name,followers_count,fan_count&access_token=${encodeURIComponent(token)}`
+                fbPageIdResolved
+              )}?fields=name,followers_count,fan_count&access_token=${encodeURIComponent(metaToken)}`
             );
             const pageData = await pageRes.json();
             const count = Number(pageData?.followers_count || pageData?.fan_count || 0);
@@ -855,7 +888,7 @@ export async function POST(req) {
               resolved.push({
                 platform: "facebook",
                 accountName: pageData?.name || "facebook",
-                accountHandle: row.accountHandle || `@${String(facebookPageId).trim()}`,
+                accountHandle: row.accountHandle || `@${fbPageIdResolved}`,
                 followers: count,
               });
               continue;
@@ -889,56 +922,20 @@ export async function POST(req) {
         }
       } else if (platform === "instagram") {
         try {
-          const igUserIdTrimmed = String(instagramUserId || "").trim();
-          if (igUserIdTrimmed) {
-            const token = process.env.META_PAGE_ACCESS_TOKEN || process.env.META_APP_ACCESS_TOKEN || "";
-            if (!token) {
-              skipped.push({
-                platform,
-                accountHandle: row.accountHandle,
-                reason: "Missing META_PAGE_ACCESS_TOKEN (or META_APP_ACCESS_TOKEN).",
-              });
-              continue;
-            }
-            const igRes = await fetch(
-              `https://graph.facebook.com/v20.0/${encodeURIComponent(
-                igUserIdTrimmed
-              )}?fields=username,followers_count,media_count&access_token=${encodeURIComponent(token)}`
-            );
-            const igData = await igRes.json();
-            if (igData?.error?.message) {
-              skipped.push({
-                platform,
-                accountHandle: row.accountHandle,
-                reason: `Instagram Graph by User ID failed: ${formatMetaAccessTokenHint(igData.error.message)}`,
-              });
-              continue;
-            }
-            const count = Number(igData?.followers_count ?? 0);
-            if (igRes.ok && (igData?.username != null || igData?.id != null)) {
-              resolved.push({
-                platform: "instagram",
-                accountName: igData?.username || "instagram",
-                accountHandle: `@${igData?.username || extractHandle(row.accountHandle)}`,
-                followers: count,
-              });
-              continue;
-            }
+          const result = await fetchInstagramFollowers(input, {
+            token: metaToken,
+            instagramUserId: igUserIdResolved,
+            facebookPageId: fbPageIdResolved,
+          });
+          if (result.ok && result.data) {
+            resolved.push(result.data);
+          } else {
             skipped.push({
               platform,
               accountHandle: row.accountHandle,
-              reason:
-                "Instagram Graph returned no user for this ID. Use the Instagram Business Account ID from Meta (Graph API Explorer: GET {your-page-id}?fields=instagram_business_account).",
+              reason: result.reason || "Unable to resolve Instagram followers.",
             });
-            continue;
           }
-          skipped.push({
-            platform,
-            accountHandle: row.accountHandle,
-            reason:
-              "Instagram: enter the numeric Instagram User ID in User Management → Edit user. Link the IG Business/Creator account to your Facebook Page, ensure META_PAGE_ACCESS_TOKEN has instagram_basic (and Page permissions). Without the Graph ID, public endpoints return 400/429.",
-          });
-          continue;
         } catch (error) {
           skipped.push({
             platform,

@@ -1272,7 +1272,7 @@ export default function AdminSection() {
                     {savingSmmBaseline ? "Saving baseline..." : "Save SMM Baseline"}
                   </button>
                   <p className="text-xs text-gray-500">
-                    Auto-fetch uses YouTube, Meta (Facebook/Instagram), and TikTok (Research API via TIKTOK_CLIENT_KEY/SECRET in .env.local). TikTok rows: use @handle or tiktok.com profile URL. Optional X_BEARER_TOKEN only for x.com handles in the TikTok row.
+                    Auto-fetch uses YouTube, Meta (Facebook/Instagram), and TikTok (TIKTOK_CLIENT_KEY/SECRET in .env.local). TikTok rows: @handle or tiktok.com profile URL only.
                   </p>
                 </div>
               )}
