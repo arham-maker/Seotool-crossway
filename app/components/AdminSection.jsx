@@ -1219,7 +1219,7 @@ export default function AdminSection() {
                         onChange={(e) => handleSmmBaselineChange(row.platform, "accountHandle", e.target.value)}
                         placeholder={
                           row.platform === "tiktok"
-                            ? "@handle, profile link, or numeric user ID (optional)"
+                            ? "@tiktokuser or https://www.tiktok.com/@user"
                             : "@handle or profile link (optional)"
                         }
                         className="px-3 py-2 border border-gray-200 rounded text-sm focus:ring-2 focus:ring-[#0EFF2A] focus:border-transparent"
@@ -1272,7 +1272,7 @@ export default function AdminSection() {
                     {savingSmmBaseline ? "Saving baseline..." : "Save SMM Baseline"}
                   </button>
                   <p className="text-xs text-gray-500">
-                    Auto-fetch supports YouTube and best-effort Facebook/Instagram/TikTok from handles/links. For consistent production-grade data, connect official APIs and keep GTM ingestion enabled.
+                    Auto-fetch uses YouTube, Meta (Facebook/Instagram), and TikTok (Research API via TIKTOK_CLIENT_KEY/SECRET in .env.local). TikTok rows: use @handle or tiktok.com profile URL. Optional X_BEARER_TOKEN only for x.com handles in the TikTok row.
                   </p>
                 </div>
               )}

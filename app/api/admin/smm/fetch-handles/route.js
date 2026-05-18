@@ -1,6 +1,7 @@
 import { requireSuperAdmin } from "../../../../../lib/middleware/auth";
 import { getUserById } from "../../../../../lib/auth";
 import { normalizeSiteOrigin } from "../../../../../lib/validation";
+import { fetchTikTokUserByUsername, getTikTokClientAccessToken } from "../../../../../lib/tiktokApi";
 
 function normalizePlatform(value) {
   const p = String(value || "").trim().toLowerCase();
@@ -99,6 +100,61 @@ function resolvePlatformInput(platform, rawInput) {
     };
   }
 
+  if (platform === "youtube") {
+    if (isUrl && (host.includes("youtube.com") || host.includes("youtu.be"))) {
+      if (parts[0] === "channel" && parts[1]) {
+        const channelId = parts[1].trim();
+        return {
+          identifier: channelId,
+          channelId,
+          profileUrl: raw,
+          normalizedHandle: channelId,
+        };
+      }
+      const atPart = parts.find((p) => p.startsWith("@"));
+      if (atPart) {
+        const handle = atPart.replace(/^@/, "");
+        return {
+          identifier: handle,
+          profileUrl: `https://www.youtube.com/@${encodeURIComponent(handle)}`,
+          normalizedHandle: handle,
+        };
+      }
+      if (parts[0] === "c" && parts[1]) {
+        return {
+          identifier: parts[1],
+          profileUrl: raw,
+          normalizedHandle: parts[1],
+          youtubeCustomUrl: parts[1],
+        };
+      }
+      if (parts[0] === "user" && parts[1]) {
+        return {
+          identifier: parts[1],
+          profileUrl: raw,
+          normalizedHandle: parts[1],
+        };
+      }
+    }
+    const rawValue = String(raw || "").trim();
+    if (/^UC[\w-]{22}$/i.test(rawValue)) {
+      return {
+        identifier: rawValue,
+        channelId: rawValue,
+        profileUrl: `https://www.youtube.com/channel/${encodeURIComponent(rawValue)}`,
+        normalizedHandle: rawValue,
+      };
+    }
+    const handle = extractHandle(rawValue);
+    return {
+      identifier: handle,
+      profileUrl: handle
+        ? `https://www.youtube.com/@${encodeURIComponent(handle.replace(/^@/, ""))}`
+        : raw,
+      normalizedHandle: handle.replace(/^@/, ""),
+    };
+  }
+
   if (platform === "instagram") {
     if (isUrl && host.includes("instagram.com") && parts[0]) {
       const handle = parts[0].replace(/^@/, "");
@@ -119,11 +175,19 @@ function resolvePlatformInput(platform, rawInput) {
   if (platform === "tiktok") {
     if (isUrl && host.includes("tiktok.com")) {
       const fromAt = parts.find((p) => p.startsWith("@"));
-      const handle = (fromAt || parts[0] || "").replace(/^@/, "").trim();
+      let handle = "";
+      if (fromAt) {
+        handle = fromAt.replace(/^@/, "").trim();
+      } else if (
+        parts[0] &&
+        !["video", "embed", "t", "share", "live", "music", "tag"].includes(parts[0].toLowerCase())
+      ) {
+        handle = parts[0].replace(/^@/, "").trim();
+      }
       if (handle) {
         return {
           identifier: handle,
-          profileUrl: raw,
+          profileUrl: raw.startsWith("http") ? raw : `https://www.tiktok.com/@${encodeURIComponent(handle)}`,
           normalizedHandle: handle,
           xUserId: null,
           tiktokUrlOnly: true,
@@ -210,30 +274,112 @@ async function fetchTextWithFallback(urls, extraHeaders = {}) {
   throw new Error(errors[errors.length - 1] || "All fallback requests failed.");
 }
 
-async function fetchYoutubeSubscribers(handle, apiKey) {
-  const q = encodeURIComponent(handle.startsWith("@") ? handle : `@${handle}`);
-  const searchRes = await fetch(
-    `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=1&q=${q}&key=${apiKey}`
-  );
-  const searchData = await searchRes.json();
-  const channelId = searchData?.items?.[0]?.snippet?.channelId;
-  if (!channelId) {
-    return null;
-  }
-
-  const channelRes = await fetch(
-    `https://www.googleapis.com/youtube/v3/channels?part=statistics,snippet&id=${encodeURIComponent(channelId)}&key=${apiKey}`
-  );
-  const channelData = await channelRes.json();
-  const item = channelData?.items?.[0];
+function youtubeResultFromChannelItem(item, displayHandle) {
   if (!item) return null;
-
+  const handle =
+    displayHandle ||
+    item?.snippet?.customUrl?.replace(/^@/, "") ||
+    item?.snippet?.title ||
+    "youtube";
   return {
     platform: "youtube",
     accountName: item?.snippet?.title || "YouTube",
-    accountHandle: `@${handle.replace(/^@/, "")}`,
+    accountHandle: handle.startsWith("@") ? handle : `@${String(handle).replace(/^@/, "")}`,
     followers: Number(item?.statistics?.subscriberCount || 0),
   };
+}
+
+function formatYoutubeApiError(payload) {
+  const err = payload?.error;
+  if (!err) return null;
+  const msg = [err.message, ...(err.errors || []).map((e) => e.reason || e.message)].filter(Boolean).join(" — ");
+  if (/youtube.*not enabled|accessNotConfigured|API key not valid/i.test(msg)) {
+    return `${msg} Enable "YouTube Data API v3" in Google Cloud for this key (PageSpeed keys do not work here — use a dedicated YOUTUBE_API_KEY).`;
+  }
+  if (/quota|dailyLimit|rateLimit/i.test(msg)) {
+    return `${msg} YouTube API quota exceeded; try again later or increase quota in Google Cloud.`;
+  }
+  return msg || "YouTube API error.";
+}
+
+async function fetchYoutubeChannelById(channelId, apiKey) {
+  const channelRes = await fetch(
+    `https://www.googleapis.com/youtube/v3/channels?part=statistics,snippet&id=${encodeURIComponent(
+      channelId
+    )}&key=${encodeURIComponent(apiKey)}`
+  );
+  const channelData = await channelRes.json();
+  const apiErr = formatYoutubeApiError(channelData);
+  if (apiErr) return { ok: false, reason: apiErr };
+  const item = channelData?.items?.[0];
+  if (!item) {
+    return { ok: false, reason: `No YouTube channel found for ID ${channelId}.` };
+  }
+  return { ok: true, data: youtubeResultFromChannelItem(item, channelId) };
+}
+
+async function fetchYoutubeSubscribers(input, apiKey) {
+  const channelId = String(input.channelId || "").trim();
+  const directId =
+    channelId || (/^UC[\w-]{22}$/i.test(String(input.identifier || "").trim()) ? input.identifier.trim() : "");
+  if (directId) {
+    return fetchYoutubeChannelById(directId, apiKey);
+  }
+
+  const handle = String(input.normalizedHandle || input.identifier || "")
+    .replace(/^@/, "")
+    .trim();
+  if (!handle) {
+    return { ok: false, reason: "Enter a YouTube @handle, channel URL, or channel ID (UC…)." };
+  }
+
+  // Preferred for @handles (YouTube Data API v3)
+  const forHandleRes = await fetch(
+    `https://www.googleapis.com/youtube/v3/channels?part=statistics,snippet&forHandle=${encodeURIComponent(
+      handle
+    )}&key=${encodeURIComponent(apiKey)}`
+  );
+  const forHandleData = await forHandleRes.json();
+  const forHandleErr = formatYoutubeApiError(forHandleData);
+  if (forHandleErr && !forHandleData?.items?.length) {
+    // continue to search fallback unless hard API misconfiguration
+    if (/not enabled|API key not valid|accessNotConfigured/i.test(forHandleErr)) {
+      return { ok: false, reason: forHandleErr };
+    }
+  }
+  const forHandleItem = forHandleData?.items?.[0];
+  if (forHandleItem) {
+    return { ok: true, data: youtubeResultFromChannelItem(forHandleItem, handle) };
+  }
+
+  const q = encodeURIComponent(`@${handle}`);
+  const searchRes = await fetch(
+    `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=5&q=${q}&key=${encodeURIComponent(
+      apiKey
+    )}`
+  );
+  const searchData = await searchRes.json();
+  const searchErr = formatYoutubeApiError(searchData);
+  if (searchErr && !searchData?.items?.length) {
+    return { ok: false, reason: searchErr };
+  }
+
+  const items = Array.isArray(searchData?.items) ? searchData.items : [];
+  const exact = items.find(
+    (it) =>
+      String(it?.snippet?.customUrl || "")
+        .replace(/^@/, "")
+        .toLowerCase() === handle.toLowerCase()
+  );
+  const channelIdFromSearch = (exact || items[0])?.snippet?.channelId;
+  if (!channelIdFromSearch) {
+    return {
+      ok: false,
+      reason: `Channel not found for "@${handle}". Use the full channel URL (youtube.com/channel/UC…) or the exact @handle from the channel page.`,
+    };
+  }
+
+  return fetchYoutubeChannelById(channelIdFromSearch, apiKey);
 }
 
 async function fetchFacebookFollowers(input) {
@@ -416,15 +562,97 @@ async function fetchXUserByPath(path, token) {
   return { ok: false, reason: lastNotFound || "Twitter API request failed." };
 }
 
-async function fetchXFollowers(input) {
-  const { identifier, profileUrl, normalizedHandle, xUserId, tiktokUrlOnly } = input;
-  if (tiktokUrlOnly) {
+async function fetchTikTokViaPageScrape(handle, profileUrl) {
+  const h = String(handle || "")
+    .replace(/^@/, "")
+    .trim();
+  if (!h) return { ok: false, reason: "TikTok handle missing." };
+
+  const urls = Array.from(
+    new Set(
+      [
+        profileUrl,
+        `https://www.tiktok.com/@${encodeURIComponent(h)}`,
+        `https://r.jina.ai/https://www.tiktok.com/@${encodeURIComponent(h)}`,
+      ].filter(Boolean)
+    )
+  );
+
+  try {
+    const { text: html } = await fetchTextWithFallback(urls);
+    const jsonMetric =
+      html.match(/"followerCount"\s*:\s*(\d+)/i) ||
+      html.match(/"follower_count"\s*:\s*(\d+)/i) ||
+      html.match(/"fans"\s*:\s*(\d+)/i);
+    const textMetric = html.match(/([\d,.]+(?:[KMB])?)\s+Followers/i);
+    const parsed = jsonMetric
+      ? Number(jsonMetric[1] || 0)
+      : textMetric
+        ? parseAbbrevNumber(textMetric[1])
+        : 0;
+    if (parsed > 0) {
+      return {
+        ok: true,
+        data: {
+          platform: "tiktok",
+          accountName: "TikTok",
+          accountHandle: `@${h}`,
+          followers: parsed,
+        },
+      };
+    }
     return {
       ok: false,
-      reason:
-        "TikTok.com follower counts cannot be fetched automatically yet. Enter followers manually, use GTM ingestion, or paste a Twitter profile URL or @handle in this TikTok row if you track that audience here.",
+      reason: "Could not read follower count from the TikTok profile page (layout may have changed).",
     };
+  } catch (err) {
+    return { ok: false, reason: err.message || "TikTok page fetch failed." };
   }
+}
+
+/** TikTok @handle or tiktok.com URL — Research API, page scrape, then optional X API fallback. */
+async function fetchTiktokFollowers(input) {
+  const { identifier, profileUrl, normalizedHandle, xUserId, tiktokUrlOnly } = input;
+  const handle = String(normalizedHandle || identifier || "")
+    .replace(/^@/, "")
+    .trim();
+
+  const clientKey = process.env.TIKTOK_CLIENT_KEY || "";
+  const clientSecret = process.env.TIKTOK_CLIENT_SECRET || "";
+  if (clientKey && clientSecret && handle) {
+    const tokenResult = await getTikTokClientAccessToken(clientKey, clientSecret);
+    if (!tokenResult.ok) {
+      return tokenResult;
+    }
+    const research = await fetchTikTokUserByUsername(handle, tokenResult.accessToken);
+    if (research.ok) {
+      return research;
+    }
+    if (tiktokUrlOnly) {
+      const scrape = await fetchTikTokViaPageScrape(handle, profileUrl);
+      if (scrape.ok) return scrape;
+      return {
+        ok: false,
+        reason: `${research.reason} Page scrape fallback: ${scrape.reason || "failed"}.`,
+      };
+    }
+  } else if (tiktokUrlOnly && handle) {
+    const scrape = await fetchTikTokViaPageScrape(handle, profileUrl);
+    if (scrape.ok) return scrape;
+    if (!clientKey || !clientSecret) {
+      return {
+        ok: false,
+        reason:
+          "Add TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET to .env.local (from developers.tiktok.com). Research API access is required for reliable TikTok follower counts; without keys we only attempt a best-effort page read.",
+      };
+    }
+  }
+
+  return fetchXFollowers(input);
+}
+
+async function fetchXFollowers(input) {
+  const { identifier, profileUrl, normalizedHandle, xUserId } = input;
   const token = normalizeXBearerToken(process.env.X_BEARER_TOKEN || "");
 
   if (!token) {
@@ -587,14 +815,14 @@ export async function POST(req) {
             });
             continue;
           }
-          const ytData = await fetchYoutubeSubscribers(input.identifier, youtubeApiKey);
-          if (ytData) {
-            resolved.push(ytData);
+          const ytResult = await fetchYoutubeSubscribers(input, youtubeApiKey);
+          if (ytResult.ok && ytResult.data) {
+            resolved.push(ytResult.data);
           } else {
             skipped.push({
               platform,
               accountHandle: row.accountHandle,
-              reason: "Channel not found from handle.",
+              reason: ytResult.reason || "Channel not found from handle.",
             });
           }
         } catch (error) {
@@ -720,21 +948,21 @@ export async function POST(req) {
         }
       } else if (platform === "tiktok") {
         try {
-          const result = await fetchXFollowers(input);
-          if (result.ok) {
+          const result = await fetchTiktokFollowers(input);
+          if (result.ok && result.data) {
             resolved.push(result.data);
           } else {
             skipped.push({
               platform,
               accountHandle: row.accountHandle,
-              reason: result.reason || "Unable to resolve TikTok row followers from handle/link.",
+              reason: result.reason || "Unable to resolve TikTok followers.",
             });
           }
         } catch (error) {
           skipped.push({
             platform,
             accountHandle: row.accountHandle,
-            reason: error.message || "Failed to fetch TikTok row followers.",
+            reason: error.message || "Failed to fetch TikTok followers.",
           });
         }
       } else {
