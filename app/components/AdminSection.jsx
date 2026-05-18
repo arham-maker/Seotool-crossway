@@ -60,7 +60,7 @@ export default function AdminSection() {
     gtmContainerId: "",
     facebookPageId: "",
     instagramUserId: "",
-    isActive: false,
+    isActive: true,
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [activeActionMenuUserId, setActiveActionMenuUserId] = useState(null);
@@ -164,7 +164,7 @@ export default function AdminSection() {
         gtmContainerId: "",
         facebookPageId: "",
         instagramUserId: "",
-        isActive: false,
+        isActive: true,
       });
       fetchUsers();
     } catch (err) {
@@ -263,65 +263,7 @@ export default function AdminSection() {
     }
   };
 
-  const [resendingFor, setResendingFor] = useState(null);
   const [successMessage, setSuccessMessage] = useState("");
-
-  const handleResendVerification = async (userId) => {
-    setResendingFor(userId);
-    setError("");
-    setSuccessMessage("");
-
-    try {
-      const res = await fetch(`/api/admin/users/${userId}/resend-verification`, {
-        method: "POST",
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to resend verification email");
-      }
-
-      setSuccessMessage(data.message || "Verification email resent.");
-      setTimeout(() => setSuccessMessage(""), 5000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setResendingFor(null);
-    }
-  };
-
-  const [cleaningUp, setCleaningUp] = useState(false);
-
-  const handleCleanup = async () => {
-    if (!confirm("This will permanently delete all unverified users older than 7 days. Continue?")) {
-      return;
-    }
-
-    setCleaningUp(true);
-    setError("");
-    setSuccessMessage("");
-
-    try {
-      const res = await fetch("/api/admin/cleanup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ days: 7 }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Cleanup failed");
-      }
-
-      setSuccessMessage(data.message);
-      setTimeout(() => setSuccessMessage(""), 5000);
-      fetchUsers();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCleaningUp(false);
-    }
-  };
 
   const saveSiteIntegrationForUserId = async (userId, { silent = false } = {}) => {
     if (!silent) {
@@ -657,7 +599,7 @@ export default function AdminSection() {
         gtmContainerId: "",
         facebookPageId: "",
         instagramUserId: "",
-        isActive: false,
+        isActive: true,
       });
       setSiteIntegrationForm({
         userId: "",
@@ -676,6 +618,11 @@ export default function AdminSection() {
       setSmmFetchStatusByPlatform({});
       fetchUsers();
 
+      setSuccessMessage(
+        data.message || "User created successfully. They can sign in immediately."
+      );
+      setTimeout(() => setSuccessMessage(""), 5000);
+
       if (followUpErrors.length) {
         setError(`User was created. ${followUpErrors.join(" ")}`);
       }
@@ -685,30 +632,23 @@ export default function AdminSection() {
   };
 
   const getStatusBadge = (user) => {
-    if (user.emailVerified || user.status === "active") {
-      return {
-        label: "Verified",
-        icon: FiCheckCircle,
-        classes: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-      };
-    }
-    if (user.status === "pending" || user.emailVerified === false) {
-      return {
-        label: "Pending",
-        icon: FiClock,
-        classes: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-      };
-    }
-    if (!user.isActive) {
+    if (user.isActive === false) {
       return {
         label: "Inactive",
         icon: FiEyeOff,
         classes: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
       };
     }
+    if (!user.emailVerified && user.status === "pending") {
+      return {
+        label: "Pending verification",
+        icon: FiClock,
+        classes: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+      };
+    }
     return {
       label: "Active",
-      icon: FiEye,
+      icon: FiCheckCircle,
       classes: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
     };
   };
@@ -814,7 +754,7 @@ export default function AdminSection() {
                   gtmContainerId: "",
                   facebookPageId: "",
                   instagramUserId: "",
-                  isActive: false,
+                  isActive: true,
                 });
                 setSiteIntegrationForm({
                   userId: "",
@@ -1357,7 +1297,8 @@ export default function AdminSection() {
                 </label>
                 {!editingUser && (
                   <p className="mt-1 text-xs text-gray-500">
-                    When checked, the new account is created as active (can still be pending email verification).
+                    New accounts are ready to sign in immediately (no verification email). Uncheck only if you want
+                    this user blocked from logging in.
                   </p>
                 )}
               </div>
@@ -1384,7 +1325,7 @@ export default function AdminSection() {
                       gtmContainerId: "",
                       facebookPageId: "",
                       instagramUserId: "",
-                      isActive: false,
+                      isActive: true,
                     });
                     setSiteIntegrationForm({
                       userId: "",

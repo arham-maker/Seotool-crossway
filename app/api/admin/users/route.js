@@ -1,8 +1,6 @@
-import crypto from "crypto";
 import { requireSuperAdmin } from "../../../../lib/middleware/auth";
-import { getAllUsers, createUser, hashPassword, getUserByEmail, hashToken, createEmailVerificationToken } from "../../../../lib/auth";
+import { getAllUsers, createUser, hashPassword, getUserByEmail } from "../../../../lib/auth";
 import { ROLES } from "../../../../lib/rbac";
-import { sendVerificationEmail } from "../../../../lib/email";
 import { logger } from "../../../../lib/logger";
 
 // GET /api/admin/users - Get all users (Super Admin only)
@@ -53,7 +51,7 @@ export async function POST(req) {
       gtmContainerId = null,
       facebookPageId = null,
       instagramUserId = null,
-      isActive = false,
+      isActive = true,
     } = body;
     
     if (!email || !password) {
@@ -108,32 +106,24 @@ export async function POST(req) {
       role,
       siteLink,
       session.user.id,
-      { gtmContainerId, facebookPageId, instagramUserId, isActive: Boolean(isActive) }
+      {
+        gtmContainerId,
+        facebookPageId,
+        instagramUserId,
+        isActive: Boolean(isActive),
+        skipVerification: true,
+      }
     );
 
-    // Generate verification token
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const hashedTokenValue = hashToken(rawToken);
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours expiry
-
-    await createEmailVerificationToken(email, hashedTokenValue, expiresAt.toISOString());
-
-    // Send verification email (use raw token in URL, hashed in DB)
-    const emailSent = await sendVerificationEmail(email, name || null, rawToken);
-
-    logger.info("User created by admin with verification email", {
+    logger.info("User created by admin (active, no email verification)", {
       userId: user.id,
       email,
-      emailSent,
       createdBy: session.user.id,
     });
 
     return new Response(
-      JSON.stringify({ 
-        message: emailSent 
-          ? "User created successfully. Verification email sent." 
-          : "User created successfully. Failed to send verification email — you can resend it from the admin panel.",
+      JSON.stringify({
+        message: "User created successfully. They can sign in immediately with the password you set.",
         user: {
           id: user.id,
           email: user.email,
@@ -146,7 +136,6 @@ export async function POST(req) {
           emailVerified: user.emailVerified,
           status: user.status,
         },
-        emailSent,
       }),
       {
         status: 201,
